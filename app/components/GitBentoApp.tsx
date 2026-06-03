@@ -5,7 +5,6 @@ import { FormEvent, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  Blocks,
   CreditCard,
   Download,
   SlidersHorizontal,
@@ -16,114 +15,13 @@ import {
   Terminal,
 } from "lucide-react";
 import { BentoGrid } from "./BentoGrid";
-import { GitCity } from "./GitCity";
 import { HoloCardView } from "./HoloCardView";
 import { TerminalView } from "./TerminalView";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { GitBentoData } from "./types";
-import type { GitCityRepo } from "./GitCity";
 
-type ViewMode = "bento" | "city" | "holo-card" | "terminal";
-
-function toCityData(data: GitBentoData) {
-  const contributionDays = data.contributionCalendar?.weeks
-    .flatMap((week) => week.contributionDays)
-    .slice(-365) ?? [];
-
-  const repoByName = new Map<string, GitCityRepo>();
-  const repos: GitCityRepo[] = [];
-
-  const pushRepo = (repo: GitCityRepo) => {
-    const existing = repoByName.get(repo.name);
-    if (existing) {
-      repoByName.set(repo.name, {
-        ...existing,
-        ...repo,
-        description: existing.description ?? repo.description,
-        language: existing.language ?? repo.language,
-        stars: Math.max(existing.stars ?? 0, repo.stars ?? 0),
-        forks: Math.max(existing.forks ?? 0, repo.forks ?? 0),
-        updatedAt: existing.updatedAt ?? repo.updatedAt,
-      });
-      return;
-    }
-
-    repoByName.set(repo.name, repo);
-    repos.push(repo);
-  };
-
-  data.topRepositories.forEach((repo) => {
-    pushRepo({
-      name: repo.name,
-      url: repo.url,
-      description: repo.description,
-      language: repo.language,
-      stars: repo.stars,
-      forks: repo.forks,
-      source: "top",
-    });
-  });
-
-  data.recentlyUpdated.forEach((repo) => {
-    pushRepo({
-      name: repo.name,
-      url: `https://github.com/${data.profile.username}/${repo.name}`,
-      language: repo.language,
-      updatedAt: repo.updatedAt,
-      source: "updated",
-    });
-  });
-
-  data.recentActivity.forEach((activity) => {
-    const repoName = activity.repo.split("/").pop() ?? activity.repo;
-    pushRepo({
-      name: repoName,
-      url: `https://github.com/${activity.repo}`,
-      updatedAt: activity.createdAt,
-      source: "activity",
-    });
-  });
-
-  const activityByDate = new Map<string, GitCityRepo>();
-  data.recentActivity.forEach((activity) => {
-    const date = activity.createdAt.slice(0, 10);
-    const repoName = activity.repo.split("/").pop() ?? activity.repo;
-    const matched = repoByName.get(repoName);
-
-    activityByDate.set(date, {
-      name: repoName,
-      url: matched?.url ?? `https://github.com/${activity.repo}`,
-      description: matched?.description,
-      language: matched?.language,
-      stars: matched?.stars,
-      forks: matched?.forks,
-      updatedAt: matched?.updatedAt ?? activity.createdAt,
-      source: "activity",
-    });
-  });
-
-  return contributionDays.map((day, index) => {
-    let featuredRepo: GitCityRepo | null = null;
-
-    if (day.contributionCount > 0 && repos.length > 0) {
-      const activityRepo = activityByDate.get(day.date);
-
-      if (activityRepo) {
-        featuredRepo = activityRepo;
-      } else {
-        const seed = day.date.split("-").join("").length + (day.contributionCount * 17) + (index * 31);
-        featuredRepo = repos[seed % repos.length] ?? null;
-      }
-    }
-
-    return {
-      date: day.date,
-      count: day.contributionCount,
-      featuredRepo,
-    };
-  });
-}
+type ViewMode = "bento" | "holo-card" | "terminal";
 
 export function GitBentoApp() {
   const [username, setUsername] = useState("");
@@ -258,7 +156,6 @@ export function GitBentoApp() {
           >
             {[
               { id: "bento", icon: Grid3x3, label: "Bento" },
-              { id: "city", icon: Blocks, label: "City" },
               { id: "holo-card", icon: CreditCard, label: "Card" },
               { id: "terminal", icon: Terminal, label: "Terminal" },
             ].map((mode) => {
@@ -285,7 +182,7 @@ export function GitBentoApp() {
         {!data && !isLoading ? (
           <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-16 text-center">
             <p className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/58">
-              Generate once, switch between three export-ready visual formats
+              Generate once, switch between premium profile formats
             </p>
             <h2 className="text-5xl font-black leading-none tracking-normal text-white sm:text-7xl">
               GitHub profile, but with taste.
@@ -308,42 +205,6 @@ export function GitBentoApp() {
           <div ref={exportRef}>
             <AnimatePresence mode="wait">
               {viewMode === "bento" ? <BentoGrid key="bento" data={data} /> : null}
-              {viewMode === "city" ? (
-                <motion.div
-                  key="city"
-                  initial={{ opacity: 0, y: 24 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -24 }}
-                  transition={{ duration: 0.3 }}
-                  className="relative left-1/2 w-screen -translate-x-1/2 space-y-4 px-4 sm:px-6 lg:px-8"
-                >
-                  <div className="mx-auto max-w-7xl rounded-[28px] border border-white/10 bg-white/[0.05] p-5 backdrop-blur-2xl">
-                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-200/80">
-                      GitCity
-                    </p>
-                    <h2 className="mt-2 text-4xl font-black leading-none text-white">
-                      {data.contributionCalendar?.totalContributions.toLocaleString() ?? "0"} commits
-                      shaped into a neon skyline
-                    </h2>
-                    <p className="mt-3 max-w-3xl text-sm leading-7 text-white/54">
-                      Every building is one day, and height maps directly to contribution count.
-                      Rotate, zoom, and inspect your year like a cyberpunk city block.
-                    </p>
-                    <div className="mt-4">
-                      <Link href="/editor" className="inline-flex">
-                        <Button type="button" variant="glass" className="rounded-[16px]">
-                          <SlidersHorizontal className="size-4" />
-                          Open Full Editor
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                  <GitCity
-                    data={toCityData(data)}
-                    className="h-[calc(100vh-13rem)] min-h-[760px] w-full rounded-none border-y border-emerald-400/18 sm:rounded-[30px] sm:border"
-                  />
-                </motion.div>
-              ) : null}
               {viewMode === "holo-card" ? (
                 <HoloCardView key="holo-card" data={data} />
               ) : null}
