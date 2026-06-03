@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "motion/react";
 import {
+  Building2,
   CreditCard,
   Download,
-  SlidersHorizontal,
   GitPullRequest,
   Grid3x3,
   LoaderCircle,
@@ -16,12 +15,13 @@ import {
 } from "lucide-react";
 import { BentoGrid } from "./BentoGrid";
 import { HoloCardView } from "./HoloCardView";
+import { ProceduralCityEditor } from "./ProceduralCityEditor";
 import { TerminalView } from "./TerminalView";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { GitBentoData } from "./types";
 
-type ViewMode = "bento" | "holo-card" | "terminal";
+type ViewMode = "bento" | "your-city" | "holo-card" | "terminal";
 
 export function GitBentoApp() {
   const [username, setUsername] = useState("");
@@ -56,6 +56,7 @@ export function GitBentoApp() {
       }
 
       setData(payload);
+      window.localStorage.setItem("gitbento:last-username", trimmedUsername);
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -135,16 +136,6 @@ export function GitBentoApp() {
               </TooltipTrigger>
               <TooltipContent>Download current view as PNG</TooltipContent>
             </Tooltip>
-            <Link href="/editor" className="inline-flex">
-              <Button
-                type="button"
-                variant="glass"
-                className="rounded-[18px]"
-              >
-                <SlidersHorizontal className="size-4" />
-                Editor
-              </Button>
-            </Link>
           </form>
         </motion.header>
 
@@ -156,6 +147,7 @@ export function GitBentoApp() {
           >
             {[
               { id: "bento", icon: Grid3x3, label: "Bento" },
+              { id: "your-city", icon: Building2, label: "Your City" },
               { id: "holo-card", icon: CreditCard, label: "Card" },
               { id: "terminal", icon: Terminal, label: "Terminal" },
             ].map((mode) => {
@@ -205,6 +197,7 @@ export function GitBentoApp() {
           <div ref={exportRef}>
             <AnimatePresence mode="wait">
               {viewMode === "bento" ? <BentoGrid key="bento" data={data} /> : null}
+              {viewMode === "your-city" ? <ProceduralCityEditor key="your-city" data={data} embedded /> : null}
               {viewMode === "holo-card" ? (
                 <HoloCardView key="holo-card" data={data} />
               ) : null}

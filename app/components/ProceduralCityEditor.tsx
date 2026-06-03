@@ -1,8 +1,7 @@
 "use client";
-
 import { toPng } from "html-to-image";
-import { OrbitControls } from "@react-three/drei";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Html, OrbitControls } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
 import {
@@ -83,11 +82,32 @@ type Cell = {
   depth: number;
   tower: boolean;
   seed: number;
+  contributionCount: number;
+  lightBands: number;
+  lightStrength: number;
+  repo: RepoHint | null;
+  date: string;
 };
 
+type RoadAxis = "x" | "z" | "junction";
+
 type RoadSegment = {
+  axis: RoadAxis;
   position: [number, number, number];
   size: [number, number, number];
+};
+
+type CarInstance = {
+  axis: Exclude<RoadAxis, "junction">;
+  position: [number, number, number];
+  bodyColor: string;
+  glowColor: string;
+  direction: 1 | -1;
+  length: number;
+  width: number;
+  speed: number;
+  phase: number;
+  travelSpan: number;
 };
 
 type ParkPatch = {
@@ -109,6 +129,7 @@ type TerrainRidge = {
 type CityModel = {
   cells: Cell[];
   roads: RoadSegment[];
+  cars: CarInstance[];
   parks: ParkPatch[];
   water: WaterStrip[];
   ridges: TerrainRidge[];
@@ -125,17 +146,30 @@ type ProfileSnapshot = {
   topLanguage: string;
 };
 
+type ContributionSignal = {
+  date: string;
+  count: number;
+  repo: RepoHint | null;
+};
+
+type RepoHint = {
+  name: string;
+  url: string;
+  language: string | null;
+  description: string | null;
+};
+
 const INITIAL_STATE: EditorState = {
   citySize: 28,
   cityDensity: 72,
   blockSize: 4,
-  streetPattern: "grid",
+  streetPattern: "organic",
   commercial: 42,
   residential: 36,
   industrial: 22,
   averageHeight: 62,
   heightVariance: 38,
-  cityStyle: "cyberpunk",
+  cityStyle: "tokyo-dense",
   riverProbability: 34,
   parksPercent: 12,
   terrainRoughness: 24,
@@ -180,21 +214,21 @@ const STYLE_THEMES: Record<CityStyle, StyleTheme> = {
     accent: "#f3d19b",
   },
   "tokyo-dense": {
-    skyTop: "#0f1f33",
-    skyBottom: "#2d3552",
-    fog: "#293049",
-    ground: "#1a1f2c",
-    road: "#111622",
-    roadGlow: "#9be2ff",
-    water: "#123247",
-    park: "#31523c",
-    commercialBase: "#3d4e77",
-    commercialGlow: "#8fd6ff",
-    residentialBase: "#475469",
-    residentialGlow: "#dbe7ff",
-    industrialBase: "#2f3648",
-    industrialGlow: "#ffb36b",
-    accent: "#ffd66e",
+    skyTop: "#0b1220",
+    skyBottom: "#202d45",
+    fog: "#212a3f",
+    ground: "#161d2a",
+    road: "#0d131c",
+    roadGlow: "#5b8db8",
+    water: "#173652",
+    park: "#223628",
+    commercialBase: "#2d4268",
+    commercialGlow: "#8fd3ff",
+    residentialBase: "#39465c",
+    residentialGlow: "#ffe6a8",
+    industrialBase: "#2f3442",
+    industrialGlow: "#ffb06f",
+    accent: "#f3f5ff",
   },
   cyberpunk: {
     skyTop: "#060812",
@@ -236,13 +270,13 @@ const PRESET_PATCHES: Record<PresetName, Partial<EditorState>> = {
   "balanced-core": {
     cityDensity: 72,
     blockSize: 4,
-    streetPattern: "grid",
+    streetPattern: "organic",
     commercial: 42,
     residential: 36,
     industrial: 22,
     averageHeight: 62,
     heightVariance: 38,
-    cityStyle: "cyberpunk",
+    cityStyle: "tokyo-dense",
     riverProbability: 34,
     parksPercent: 12,
     terrainRoughness: 24,
@@ -326,6 +360,49 @@ function zoneColor(theme: StyleTheme, zone: ZoneType) {
   return [theme.residentialBase, theme.residentialGlow] as const;
 }
 
+function pickWindowColor(theme: StyleTheme, cell: Cell, rowIndex: number, colIndex: number) {
+  if (cell.zone === "commercial") {
+    return seededNoise(cell.seed + 301, rowIndex, colIndex) > 0.45 ? "#9ed8ff" : "#d7ecff";
+  }
+
+  if (cell.zone === "industrial") {
+    return seededNoise(cell.seed + 302, rowIndex, colIndex) > 0.5 ? "#ffb978" : "#ffdca6";
+  }
+
+  return seededNoise(cell.seed + 303, rowIndex, colIndex) > 0.52 ? "#ffd88a" : "#fff1c7";
+}
+
+function pickCarPalette(style: CityStyle, seed: number) {
+  const palettes: Record<CityStyle, { body: string[]; glow: string }> = {
+    "modern-glass": {
+      body: ["#d8e4ee", "#b8cad8", "#94a9ba", "#e9f3fb"],
+      glow: "#d8f3ff",
+    },
+    european: {
+      body: ["#b44f3f", "#6a7d8b", "#c9b07d", "#efe6da"],
+      glow: "#ffe4b8",
+    },
+    "tokyo-dense": {
+      body: ["#f6d160", "#9cc4ff", "#d9667b", "#d9e4f4"],
+      glow: "#99ecff",
+    },
+    cyberpunk: {
+      body: ["#ff4fd8", "#45f0ff", "#f8ff78", "#9b7dff"],
+      glow: "#c9ff6a",
+    },
+    brutalist: {
+      body: ["#9da6b0", "#6a727d", "#d0d5da", "#7d858e"],
+      glow: "#f4f7fb",
+    },
+  };
+
+  const palette = palettes[style];
+  return {
+    bodyColor: palette.body[seed % palette.body.length],
+    glowColor: palette.glow,
+  };
+}
+
 function normalizeBalances(state: EditorState) {
   const total = state.commercial + state.residential + state.industrial;
   if (total <= 0) return { commercial: 0.34, residential: 0.33, industrial: 0.33 };
@@ -348,6 +425,64 @@ function deriveProfileSnapshot(data: GitBentoData): ProfileSnapshot {
   };
 }
 
+function buildContributionSignals(data: GitBentoData): ContributionSignal[] {
+  const repoDirectory = new Map<string, RepoHint>();
+
+  data.topRepositories.forEach((repo) => {
+    repoDirectory.set(repo.name.toLowerCase(), {
+      name: repo.name,
+      url: repo.url,
+      language: repo.language,
+      description: repo.description,
+    });
+  });
+
+  data.recentlyUpdated.forEach((repo) => {
+    const key = repo.name.toLowerCase();
+    if (!repoDirectory.has(key)) {
+      repoDirectory.set(key, {
+        name: repo.name,
+        url: `https://github.com/${data.profile.username}/${repo.name}`,
+        language: repo.language,
+        description: null,
+      });
+    }
+  });
+
+  const activityByDate = new Map<string, RepoHint[]>();
+  data.recentActivity.forEach((activity) => {
+    const date = activity.createdAt.slice(0, 10);
+    const repoName = activity.repo.split("/").pop() ?? activity.repo;
+    const key = repoName.toLowerCase();
+    const repoHint = repoDirectory.get(key) ?? {
+      name: repoName,
+      url: `https://github.com/${activity.repo}`,
+      language: null,
+      description: null,
+    };
+
+    const list = activityByDate.get(date) ?? [];
+    list.push(repoHint);
+    activityByDate.set(date, list);
+  });
+
+  const fallbackRepos = Array.from(repoDirectory.values());
+
+  return data.contributionCalendar?.weeks
+    .flatMap((week) =>
+      week.contributionDays.map((day, index) => {
+        const dateRepos = activityByDate.get(day.date);
+        const fallbackRepo = fallbackRepos.length > 0 ? fallbackRepos[index % fallbackRepos.length] : null;
+        return {
+          date: day.date,
+          count: day.contributionCount,
+          repo: dateRepos?.[0] ?? fallbackRepo,
+        };
+      }),
+    )
+    .slice(-365) ?? [];
+}
+
 function patchStateFromProfile(data: GitBentoData): Partial<EditorState> {
   const contributions = data.contributionCalendar?.totalContributions ?? data.rpg.totalSignals;
   const stars = data.totals.stars;
@@ -358,27 +493,17 @@ function patchStateFromProfile(data: GitBentoData): Partial<EditorState> {
   const nightSignals = data.rpg.nightSignals;
   const topLanguage = data.topLanguages[0]?.name?.toLowerCase() ?? "";
 
-  const cityStyle: CityStyle =
-    topLanguage.includes("typescript") || topLanguage.includes("javascript")
-      ? "cyberpunk"
-      : topLanguage.includes("java")
-        ? "tokyo-dense"
-        : topLanguage.includes("go")
-          ? "modern-glass"
-          : topLanguage.includes("python")
-            ? "european"
-            : "brutalist";
-
   return {
     citySize: clamp(18 + Math.round(repos / 4), 18, 40),
     cityDensity: clamp(38 + Math.round(consistency * 0.55), 35, 96),
     blockSize: clamp(3 + Math.round(diversity / 30), 2, 7),
+    streetPattern: diversity > 58 ? "organic" : consistency > 78 ? "grid" : "radial",
     commercial: clamp(20 + Math.round(impact * 0.32), 10, 70),
     residential: clamp(26 + Math.round(consistency * 0.28), 10, 70),
     industrial: clamp(16 + Math.round((repos + stars) / 25), 8, 64),
     averageHeight: clamp(22 + Math.round(contributions / 26), 24, 94),
     heightVariance: clamp(10 + Math.round((nightSignals + stars) / 18), 8, 68),
-    cityStyle,
+    cityStyle: "tokyo-dense",
     riverProbability: clamp(18 + Math.round(diversity * 0.22), 0, 92),
     parksPercent: clamp(8 + Math.round((100 - impact) * 0.12), 4, 28),
     terrainRoughness: clamp(12 + Math.round(diversity * 0.18), 4, 76),
@@ -386,7 +511,7 @@ function patchStateFromProfile(data: GitBentoData): Partial<EditorState> {
   };
 }
 
-function buildCityModel(state: EditorState): CityModel {
+function buildCityModel(state: EditorState, contributions: ContributionSignal[]) {
   const size = state.citySize;
   const spacing = 1.72;
   const stride = clamp(Math.round(state.blockSize), 2, 7) + 1;
@@ -396,6 +521,7 @@ function buildCityModel(state: EditorState): CityModel {
   const roughness = state.terrainRoughness / 100;
   const balances = normalizeBalances(state);
   const roads: RoadSegment[] = [];
+  const cars: CarInstance[] = [];
   const parks: ParkPatch[] = [];
   const water: WaterStrip[] = [];
   const ridges: TerrainRidge[] = [];
@@ -407,8 +533,17 @@ function buildCityModel(state: EditorState): CityModel {
   const riverAmplitude = 1.5 + (riverChance * 4);
   const riverWidth = 0.68 + (riverChance * 1.2);
   const radialRoadRadius = Math.max(4, Math.round(size * 0.22));
+  const edgeRoadInset = 1;
+  const activeSignals = contributions.filter((entry) => entry.count > 0);
+  const contributionFeed = activeSignals.length > 0 ? activeSignals : contributions;
+  const maxContribution = Math.max(1, ...contributionFeed.map((entry) => entry.count));
+  let contributionIndex = 0;
 
   const isRoadCell = (x: number, z: number) => {
+    if (x === edgeRoadInset || z === edgeRoadInset || x === size - edgeRoadInset - 1 || z === size - edgeRoadInset - 1) {
+      return true;
+    }
+
     if (state.streetPattern === "grid") {
       return x % stride === 0 || z % stride === 0;
     }
@@ -441,10 +576,38 @@ function buildCityModel(state: EditorState): CityModel {
       const waterHere = riverEnabled && Math.abs(centerZ - riverLine) < riverWidth && fbm(waterSeed, x * 0.17, z * 0.17, 2) > (0.38 - riverChance * 0.12);
 
       if (road) {
+        const horizontalRoad = isRoadCell(Math.max(0, x - 1), z) || isRoadCell(Math.min(size - 1, x + 1), z);
+        const verticalRoad = isRoadCell(x, Math.max(0, z - 1)) || isRoadCell(x, Math.min(size - 1, z + 1));
+        const axis: RoadAxis = horizontalRoad && !verticalRoad ? "x" : verticalRoad && !horizontalRoad ? "z" : "junction";
         roads.push({
+          axis,
           position: [worldX, 0.02, worldZ],
           size: [spacing * 0.92, 0.05, spacing * 0.92],
         });
+
+        const trafficNoise = fbm(1601, x * 0.27, z * 0.27, 2);
+        const isRingRoad =
+          x === edgeRoadInset ||
+          z === edgeRoadInset ||
+          x === size - edgeRoadInset - 1 ||
+          z === size - edgeRoadInset - 1;
+        if (axis !== "junction" && isRingRoad && trafficNoise > 0.74 && centerDistance < 1.1 && cars.length < 8) {
+          const laneOffset = spacing * 0.16 * (seededNoise(1602, x, z) > 0.5 ? 1 : -1);
+          const { bodyColor, glowColor } = pickCarPalette(state.cityStyle, (x * 31) + (z * 17) + size);
+          const travelSpan = axis === "x" ? bounds.width - (spacing * 3.4) : bounds.depth - (spacing * 3.4);
+          cars.push({
+            axis,
+            position: axis === "x" ? [worldX, 0.26, worldZ + laneOffset] : [worldX + laneOffset, 0.26, worldZ],
+            bodyColor,
+            glowColor,
+            direction: seededNoise(1603, x, z) > 0.5 ? 1 : -1,
+            length: spacing * 0.52,
+            width: spacing * 0.26,
+            speed: 1.4 + seededNoise(1604, x, z) * 1.6,
+            phase: seededNoise(1605, x, z) * Math.PI * 2,
+            travelSpan,
+          });
+        }
         continue;
       }
 
@@ -470,6 +633,11 @@ function buildCityModel(state: EditorState): CityModel {
       if (occupancy > density + 0.15) continue;
 
       const zoneRoll = fbm(911, x * 0.12, z * 0.12, 3);
+      const contribution = contributionFeed.length > 0
+        ? contributionFeed[contributionIndex % contributionFeed.length]
+        : { date: `${x}-${z}`, count: 0, repo: null };
+      contributionIndex += 1;
+      const contributionStrength = contribution.count / maxContribution;
       let zone: ZoneType = "residential";
       const commercialBias = balances.commercial + (1 - centerDistance) * 0.24;
       const industrialBias = balances.industrial + roughness * 0.18 + (state.terrainStyle === "mountains" ? 0.1 : 0);
@@ -486,17 +654,22 @@ function buildCityModel(state: EditorState): CityModel {
             ? state.averageHeight * 0.7
             : state.averageHeight * 0.56;
       const variance = ((fbm(1201, x * 0.24, z * 0.24, 4) - 0.5) * 2) * state.heightVariance;
-      const height = clamp((baseHeight + variance) / 10, 0.8, 24);
+      const commitLift = contributionStrength * (state.averageHeight * 0.95);
+      const height = clamp((baseHeight + variance + commitLift) / 10, 0.8, 24);
       const footprintNoise = fbm(721, x * 0.4, z * 0.4, 3);
       const width = spacing * (0.44 + footprintNoise * 0.38);
       const depth = spacing * (0.44 + fbm(722, x * 0.4, z * 0.4, 3) * 0.38);
+      const organicOffsetX = state.streetPattern === "grid" ? 0 : (seededNoise(731, x, z) - 0.5) * spacing * 0.22;
+      const organicOffsetZ = state.streetPattern === "grid" ? 0 : (seededNoise(732, x, z) - 0.5) * spacing * 0.22;
       const tower = zone === "commercial" && height > (state.averageHeight / 8);
+      const lightBands = clamp(Math.round(2 + contributionStrength * 8), 2, 10);
+      const lightStrength = clamp(0.16 + contributionStrength * 0.72, 0.18, 0.9);
 
       cells.push({
         x,
         z,
-        worldX,
-        worldZ,
+        worldX: worldX + organicOffsetX,
+        worldZ: worldZ + organicOffsetZ,
         road: false,
         water: false,
         park: false,
@@ -506,6 +679,11 @@ function buildCityModel(state: EditorState): CityModel {
         depth,
         tower,
         seed: x * 1000 + z * 7 + size,
+        contributionCount: contribution.count,
+        lightBands,
+        lightStrength,
+        repo: contribution.repo,
+        date: contribution.date,
       });
     }
   }
@@ -530,7 +708,39 @@ function buildCityModel(state: EditorState): CityModel {
     }
   }
 
-  return { cells, roads, parks, water, ridges, bounds };
+  if (cars.length < 8) {
+    const templates: Array<Pick<CarInstance, "axis" | "position" | "direction">> = [
+      { axis: "x", position: [0, 0.26, -half + spacing], direction: 1 },
+      { axis: "x", position: [0, 0.26, half - spacing], direction: -1 },
+      { axis: "z", position: [-half + spacing, 0.26, 0], direction: 1 },
+      { axis: "z", position: [half - spacing, 0.26, 0], direction: -1 },
+      { axis: "x", position: [0, 0.26, -half + spacing * 3], direction: -1 },
+      { axis: "x", position: [0, 0.26, half - spacing * 3], direction: 1 },
+      { axis: "z", position: [-half + spacing * 3, 0.26, 0], direction: -1 },
+      { axis: "z", position: [half - spacing * 3, 0.26, 0], direction: 1 },
+    ];
+
+    templates.slice(0, 8 - cars.length).forEach((template, index) => {
+      const { bodyColor, glowColor } = pickCarPalette(state.cityStyle, index + size);
+      const laneOffset = spacing * 0.16 * (index % 2 === 0 ? 1 : -1);
+      cars.push({
+        ...template,
+        position:
+          template.axis === "x"
+            ? [template.position[0], template.position[1], template.position[2] + laneOffset]
+            : [template.position[0] + laneOffset, template.position[1], template.position[2]],
+        bodyColor,
+        glowColor,
+        length: spacing * 0.52,
+        width: spacing * 0.26,
+        speed: 1.2 + (index % 4) * 0.18,
+        phase: index * 0.72,
+        travelSpan: (template.axis === "x" ? bounds.width : bounds.depth) - (spacing * 3.4),
+      });
+    });
+  }
+
+  return { cells, roads, cars, parks, water, ridges, bounds };
 }
 
 function CameraDirector({
@@ -596,10 +806,147 @@ function Terrain({ bounds, theme }: { bounds: CityModel["bounds"]; theme: StyleT
   );
 }
 
-function CityScene({ state }: { state: EditorState }) {
+function TrafficSignal({
+  position,
+  theme,
+  phase,
+}: {
+  position: [number, number, number];
+  theme: StyleTheme;
+  phase: number;
+}) {
+  const lightRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    const cycle = (clock.getElapsedTime() * 0.8 + phase) % 6;
+    const activeColor = cycle < 3 ? "#ff4d4d" : "#6dff7a";
+    if (lightRef.current?.material instanceof THREE.MeshBasicMaterial) {
+      lightRef.current.material.color.set(activeColor);
+    }
+  });
+
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.6, 0]} castShadow>
+        <boxGeometry args={[0.06, 1.2, 0.06]} />
+        <meshStandardMaterial color="#505761" />
+      </mesh>
+      <mesh position={[0, 1.2, 0]} castShadow>
+        <boxGeometry args={[0.16, 0.32, 0.16]} />
+        <meshStandardMaterial color="#171b22" />
+      </mesh>
+      <mesh ref={lightRef} position={[0, 1.22, 0.09]}>
+        <boxGeometry args={[0.07, 0.07, 0.03]} />
+        <meshBasicMaterial color={theme.roadGlow} />
+      </mesh>
+    </group>
+  );
+}
+
+function AnimatedCar({
+  car,
+}: {
+  car: CarInstance;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const start = useMemo(() => new THREE.Vector3(...car.position), [car.position]);
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const travel = ((clock.getElapsedTime() * car.speed) + car.phase) % car.travelSpan;
+    const offset = travel - (car.travelSpan / 2);
+
+    if (car.axis === "x") {
+      groupRef.current.position.set(start.x + (offset * car.direction), start.y, start.z);
+    } else {
+      groupRef.current.position.set(start.x, start.y, start.z + (offset * car.direction));
+    }
+  });
+
+  return (
+    <group
+      ref={groupRef}
+      position={car.position}
+      rotation={[0, car.axis === "x" ? (car.direction > 0 ? 0 : Math.PI) : (car.direction > 0 ? Math.PI / 2 : -Math.PI / 2), 0]}
+    >
+      <mesh position={[0, -0.08, 0]} receiveShadow>
+        <boxGeometry args={[car.length * 1.24, 0.03, car.width * 1.7]} />
+        <meshBasicMaterial color={car.glowColor} transparent opacity={0.18} />
+      </mesh>
+      <mesh castShadow>
+        <boxGeometry args={[car.length, 0.18, car.width]} />
+        <meshStandardMaterial color={car.bodyColor} emissive={car.bodyColor} emissiveIntensity={0.28} roughness={0.42} metalness={0.24} />
+      </mesh>
+      <mesh position={[-0.02, 0.16, 0]} castShadow>
+        <boxGeometry args={[car.length * 0.56, 0.16, car.width * 0.82]} />
+        <meshStandardMaterial color="#e8eef7" emissive="#f4f8ff" emissiveIntensity={0.2} roughness={0.18} metalness={0.3} />
+      </mesh>
+      <mesh position={[car.length * 0.48, 0.01, car.width * 0.19]}>
+        <boxGeometry args={[0.08, 0.04, 0.04]} />
+        <meshBasicMaterial color={car.glowColor} />
+      </mesh>
+      <mesh position={[car.length * 0.48, 0.01, -car.width * 0.19]}>
+        <boxGeometry args={[0.08, 0.04, 0.04]} />
+        <meshBasicMaterial color={car.glowColor} />
+      </mesh>
+      <mesh position={[-car.length * 0.48, 0.01, car.width * 0.19]}>
+        <boxGeometry args={[0.08, 0.04, 0.04]} />
+        <meshBasicMaterial color="#ff6a5f" />
+      </mesh>
+      <mesh position={[-car.length * 0.48, 0.01, -car.width * 0.19]}>
+        <boxGeometry args={[0.08, 0.04, 0.04]} />
+        <meshBasicMaterial color="#ff6a5f" />
+      </mesh>
+      {[-car.length * 0.28, car.length * 0.28].map((wheelX) => (
+        [-car.width * 0.36, car.width * 0.36].map((wheelZ) => (
+          <mesh key={`${wheelX}-${wheelZ}`} position={[wheelX, -0.12, wheelZ]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <cylinderGeometry args={[0.05, 0.05, 0.04, 12]} />
+            <meshStandardMaterial color="#0f1115" />
+          </mesh>
+        ))
+      ))}
+    </group>
+  );
+}
+
+function BuildingHoverCard({ cell }: { cell: Cell }) {
+  return (
+    <Html position={[0, cell.height / 2 + 1.1, 0]} center distanceFactor={10} occlude>
+      <div className="w-56 rounded-2xl border border-white/12 bg-[rgba(7,10,16,0.94)] p-3 text-left shadow-[0_16px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-200/70">Commit Block</div>
+        <div className="mt-1 text-sm font-black text-white">{cell.repo?.name ?? "Unmapped Repo"}</div>
+        <div className="mt-1 text-xs text-white/68">{cell.date}</div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
+            <div className="text-white/45">Commits</div>
+            <div className="mt-1 font-bold text-white">{cell.contributionCount}</div>
+          </div>
+          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
+            <div className="text-white/45">Language</div>
+            <div className="mt-1 font-bold text-white">{cell.repo?.language ?? "Mixed"}</div>
+          </div>
+        </div>
+        {cell.repo?.description ? (
+          <div className="mt-2 line-clamp-3 text-[11px] leading-4 text-white/58">
+            {cell.repo.description}
+          </div>
+        ) : null}
+      </div>
+    </Html>
+  );
+}
+
+function CityScene({
+  state,
+  contributions,
+}: {
+  state: EditorState;
+  contributions: ContributionSignal[];
+}) {
   const theme = STYLE_THEMES[state.cityStyle];
-  const model = useMemo(() => buildCityModel(state), [state]);
+  const model = useMemo(() => buildCityModel(state, contributions), [contributions, state]);
   const controlsRef = useRef<any>(null);
+  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
 
   return (
     <>
@@ -661,23 +1008,92 @@ function CityScene({ state }: { state: EditorState }) {
       ))}
 
       {model.roads.map((road, index) => (
-        <mesh key={`road-${index}`} position={road.position} receiveShadow>
-          <boxGeometry args={road.size} />
-          <meshStandardMaterial
-            color={theme.road}
-            emissive={theme.roadGlow}
-            emissiveIntensity={state.cityStyle === "cyberpunk" ? 0.18 : 0.06}
-            roughness={0.96}
-            metalness={0.05}
-          />
-        </mesh>
+        <group key={`road-${index}`} position={road.position}>
+          <mesh receiveShadow>
+            <boxGeometry args={road.size} />
+            <meshStandardMaterial
+              color={theme.road}
+              emissive={theme.roadGlow}
+              emissiveIntensity={state.cityStyle === "cyberpunk" ? 0.18 : 0.06}
+              roughness={0.96}
+              metalness={0.05}
+            />
+          </mesh>
+          {road.axis !== "junction" ? (
+            <>
+              <mesh position={[0, 0.028, 0]} receiveShadow>
+                <boxGeometry args={[road.axis === "x" ? road.size[0] : road.size[0] * 0.28, 0.012, road.axis === "x" ? road.size[2] * 0.28 : road.size[2]]} />
+                <meshStandardMaterial color="#0b0e14" roughness={1} />
+              </mesh>
+              {[-0.18, 0.18].map((offset) => (
+                <mesh
+                  key={offset}
+                  position={road.axis === "x" ? [0, 0.035, offset] : [offset, 0.035, 0]}
+                  rotation={road.axis === "x" ? [-Math.PI / 2, 0, 0] : [-Math.PI / 2, Math.PI / 2, 0]}
+                >
+                  <planeGeometry args={[road.size[0] * 0.82, 0.02]} />
+                  <meshBasicMaterial color="#d8dde6" transparent opacity={0.2} />
+                </mesh>
+              ))}
+              {[-0.24, -0.08, 0.08, 0.24].map((offset) => (
+                <mesh
+                  key={`dash-${offset}`}
+                  position={road.axis === "x" ? [offset * road.size[0], 0.036, 0] : [0, 0.036, offset * road.size[2]]}
+                  rotation={road.axis === "x" ? [-Math.PI / 2, 0, 0] : [-Math.PI / 2, Math.PI / 2, 0]}
+                >
+                  <planeGeometry args={[0.18, 0.03]} />
+                  <meshBasicMaterial color="#f8e28a" transparent opacity={0.75} />
+                </mesh>
+              ))}
+            </>
+          ) : (
+            <>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.036, 0]}>
+                <ringGeometry args={[road.size[0] * 0.08, road.size[0] * 0.18, 18]} />
+                <meshBasicMaterial color={theme.roadGlow} transparent opacity={0.18} side={THREE.DoubleSide} />
+              </mesh>
+              {Math.abs(road.position[0]) > (model.bounds.width / 2) - 4 &&
+              Math.abs(road.position[2]) > (model.bounds.depth / 2) - 4
+                ? [
+                    [road.size[0] * 0.28, 0, road.size[2] * 0.28],
+                    [-road.size[0] * 0.28, 0, -road.size[2] * 0.28],
+                  ].map((position, lightIndex) => (
+                    <TrafficSignal
+                      key={`signal-${lightIndex}`}
+                      position={position as [number, number, number]}
+                      theme={theme}
+                      phase={lightIndex * 1.6}
+                    />
+                  ))
+                : null}
+            </>
+          )}
+        </group>
+      ))}
+
+      {model.cars.map((car, index) => (
+        <AnimatedCar key={`car-${index}`} car={car} />
       ))}
 
       {model.cells.map((cell) => {
         const [baseColor, glowColor] = zoneColor(theme, cell.zone);
-        const stripeCount = Math.min(7, Math.max(2, Math.round(cell.height / 3.2)));
+        const cellId = `${cell.x}-${cell.z}`;
+        const windowRows = clamp(cell.lightBands, 2, 9);
+        const windowCols = clamp(Math.round((cell.width / 0.18) * 0.7), 2, 4);
+        const sideWindowCols = clamp(Math.round((cell.depth / 0.18) * 0.7), 2, 4);
         return (
-          <group key={`${cell.x}-${cell.z}`} position={[cell.worldX, cell.height / 2, cell.worldZ]}>
+          <group
+            key={cellId}
+            position={[cell.worldX, cell.height / 2, cell.worldZ]}
+            onPointerOver={(event) => {
+              event.stopPropagation();
+              setHoveredCell(cellId);
+            }}
+            onPointerOut={(event) => {
+              event.stopPropagation();
+              setHoveredCell((current) => (current === cellId ? null : current));
+            }}
+          >
             <mesh castShadow receiveShadow>
               <boxGeometry args={[cell.width, cell.height, cell.depth]} />
               <meshStandardMaterial
@@ -689,26 +1105,50 @@ function CityScene({ state }: { state: EditorState }) {
               />
             </mesh>
 
-            {Array.from({ length: stripeCount }, (_, index) => {
-              const y = -cell.height / 2 + ((index + 1) / (stripeCount + 1)) * cell.height;
-              return (
-                <mesh key={index} position={[0, y, cell.depth / 2 + 0.01]}>
-                  <planeGeometry args={[cell.width * 0.74, Math.max(0.12, cell.height / (stripeCount * 3.6))]} />
-                  <meshBasicMaterial
-                    color={glowColor}
-                    transparent
-                    opacity={0.18 + Math.min(0.44, cell.height / 40)}
-                  />
-                </mesh>
-              );
+            {Array.from({ length: windowRows }, (_, rowIndex) => {
+              const y = -cell.height / 2 + ((rowIndex + 1) / (windowRows + 1)) * cell.height;
+              return Array.from({ length: windowCols }, (_, colIndex) => {
+                const x = ((colIndex + 1) / (windowCols + 1) - 0.5) * cell.width * 0.72;
+                const lit = seededNoise(cell.seed, rowIndex + 1, colIndex + 1) < clamp(0.24 + (cell.contributionCount / Math.max(1, cell.contributionCount + 4)), 0.2, 0.92);
+                return (
+                  <mesh key={`front-${rowIndex}-${colIndex}`} position={[x, y, cell.depth / 2 + 0.01]}>
+                    <planeGeometry args={[cell.width * 0.12, Math.max(0.1, cell.height / (windowRows * 5.4))]} />
+                    <meshBasicMaterial
+                      color={pickWindowColor(theme, cell, rowIndex, colIndex)}
+                      transparent
+                      opacity={lit ? cell.lightStrength : 0.06}
+                    />
+                  </mesh>
+                );
+              });
             })}
 
-            {cell.tower ? (
-              <mesh position={[0, cell.height / 2 + 0.7, 0]}>
-                <boxGeometry args={[cell.width * 0.26, 1.4, cell.depth * 0.26]} />
-                <meshStandardMaterial color={glowColor} emissive={glowColor} emissiveIntensity={0.9} />
+            {Array.from({ length: windowRows - 1 }, (_, rowIndex) => {
+              const y = -cell.height / 2 + ((rowIndex + 1) / windowRows) * cell.height;
+              return Array.from({ length: sideWindowCols }, (_, colIndex) => {
+                const z = ((colIndex + 1) / (sideWindowCols + 1) - 0.5) * cell.depth * 0.72;
+                const lit = seededNoise(cell.seed + 17, rowIndex + 1, colIndex + 1) < clamp(0.18 + (cell.contributionCount / Math.max(1, cell.contributionCount + 5)), 0.16, 0.84);
+                return (
+                  <mesh key={`side-${rowIndex}-${colIndex}`} position={[cell.width / 2 + 0.01, y, z]} rotation={[0, Math.PI / 2, 0]}>
+                    <planeGeometry args={[cell.depth * 0.12, Math.max(0.09, cell.height / (windowRows * 5.8))]} />
+                    <meshBasicMaterial
+                      color={pickWindowColor(theme, cell, rowIndex, colIndex)}
+                      transparent
+                      opacity={lit ? cell.lightStrength * 0.86 : 0.05}
+                    />
+                  </mesh>
+                );
+              });
+            })}
+
+            {state.cityStyle === "tokyo-dense" && cell.zone === "commercial" ? (
+              <mesh position={[cell.width / 2 + 0.04, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+                <planeGeometry args={[cell.height * 0.42, cell.height * 0.22]} />
+                <meshBasicMaterial color="#92d9ff" transparent opacity={0.26} />
               </mesh>
             ) : null}
+
+            {hoveredCell === cellId ? <BuildingHoverCard cell={cell} /> : null}
           </group>
         );
       })}
@@ -819,10 +1259,25 @@ function Segmented<T extends string>({
   );
 }
 
-export function ProceduralCityEditor() {
+function syncFromData(data: GitBentoData) {
+  return {
+    profile: deriveProfileSnapshot(data),
+    contributions: buildContributionSignals(data),
+    patch: patchStateFromProfile(data),
+  };
+}
+
+export function ProceduralCityEditor({
+  data,
+  embedded = false,
+}: {
+  data?: GitBentoData;
+  embedded?: boolean;
+}) {
   const [state, setState] = useState<EditorState>(INITIAL_STATE);
-  const [username, setUsername] = useState("shashwat");
+  const [username, setUsername] = useState("");
   const [profile, setProfile] = useState<ProfileSnapshot | null>(null);
+  const [contributions, setContributions] = useState<ContributionSignal[]>([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -843,13 +1298,21 @@ export function ProceduralCityEditor() {
     });
   }
 
-  async function handleGenerate(event?: FormEvent<HTMLFormElement>) {
+  function applyIncomingData(nextData: GitBentoData) {
+    const hydrated = syncFromData(nextData);
+    setProfile(hydrated.profile);
+    setContributions(hydrated.contributions);
+    patchState(hydrated.patch);
+  }
+
+  async function handleGenerate(event?: FormEvent<HTMLFormElement>, overrideUsername?: string) {
     event?.preventDefault();
-    const trimmed = username.trim();
+    const trimmed = (overrideUsername ?? username).trim();
     if (!trimmed) return;
 
     setIsLoading(true);
     setError("");
+    setUsername(trimmed);
 
     try {
       const response = await fetch(`/api/github?username=${encodeURIComponent(trimmed)}`);
@@ -860,9 +1323,8 @@ export function ProceduralCityEditor() {
         return;
       }
 
-      const snapshot = deriveProfileSnapshot(payload as GitBentoData);
-      setProfile(snapshot);
-      patchState(patchStateFromProfile(payload as GitBentoData));
+      window.localStorage.setItem("gitbento:last-username", trimmed);
+      applyIncomingData(payload as GitBentoData);
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -957,12 +1419,30 @@ export function ProceduralCityEditor() {
   }
 
   useEffect(() => {
-    void handleGenerate();
+    if (data) {
+      setUsername(data.profile.username);
+      applyIncomingData(data);
+      return;
+    }
+
+    const queryUsername = new URLSearchParams(window.location.search).get("username")?.trim();
+    const storedUsername = typeof window !== "undefined" ? window.localStorage.getItem("gitbento:last-username")?.trim() : "";
+    const nextUsername = queryUsername || storedUsername || "";
+
+    if (nextUsername) {
+      setUsername(nextUsername);
+      void handleGenerate(undefined, nextUsername);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [data]);
 
   return (
-    <main ref={captureRef} className="relative min-h-screen overflow-hidden bg-[#05070b] text-white">
+    <main
+      ref={captureRef}
+      className={embedded
+        ? "relative h-[calc(100vh-12rem)] min-h-[760px] overflow-hidden rounded-[34px] border border-white/10 bg-[#05070b] text-white"
+        : "relative min-h-screen overflow-hidden bg-[#05070b] text-white"}
+    >
       <div
         className="absolute inset-0"
         style={{
@@ -974,7 +1454,10 @@ export function ProceduralCityEditor() {
 
       <div className="absolute inset-0 bg-[linear-gradient(transparent_0%,rgba(0,0,0,0.22)_100%)]" />
 
-      <div className="absolute left-6 right-[22rem] top-24 bottom-28 overflow-hidden rounded-[34px] border border-white/10 bg-black/18 shadow-[0_30px_120px_rgba(0,0,0,0.38)]">
+      <div className={embedded
+        ? "absolute inset-0 overflow-hidden rounded-[34px] bg-black/18 shadow-[0_30px_120px_rgba(0,0,0,0.38)]"
+        : "absolute left-6 right-[22rem] top-24 bottom-28 overflow-hidden rounded-[34px] border border-white/10 bg-black/18 shadow-[0_30px_120px_rgba(0,0,0,0.38)]"}
+      >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.08),transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_18%,rgba(0,0,0,0.18))]" />
         <Canvas
           shadows
@@ -987,11 +1470,12 @@ export function ProceduralCityEditor() {
             toneMappingExposure: state.cityStyle === "cyberpunk" ? 1.05 : 0.96,
           }}
         >
-          <CityScene state={deferredState} />
+          <CityScene state={deferredState} contributions={contributions} />
         </Canvas>
       </div>
 
       <div className="pointer-events-none absolute inset-0">
+        {!embedded ? (
         <motion.nav
           initial={{ opacity: 0, y: -18 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1047,12 +1531,15 @@ export function ProceduralCityEditor() {
             </form>
           </div>
         </motion.nav>
+        ) : null}
 
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.06 }}
-          className="pointer-events-auto absolute left-10 top-28 z-10 w-[340px] rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"
+          className={embedded
+            ? "pointer-events-auto absolute left-6 top-6 z-10 w-[320px] rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"
+            : "pointer-events-auto absolute left-10 top-28 z-10 w-[340px] rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"}
         >
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200/68">Live Profile City</p>
           <h2 className="mt-3 text-4xl font-black leading-none text-white">
@@ -1072,22 +1559,19 @@ export function ProceduralCityEditor() {
           initial={{ opacity: 0, x: 18 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.45, delay: 0.1 }}
-          className="pointer-events-auto absolute right-6 top-24 z-10 max-h-[calc(100vh-8rem)] w-[320px] overflow-y-auto rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"
+          className={embedded
+            ? "pointer-events-auto absolute right-6 top-6 z-10 max-h-[calc(100%-3rem)] w-[300px] overflow-y-auto rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"
+            : "pointer-events-auto absolute right-6 top-24 z-10 max-h-[calc(100vh-8rem)] w-[320px] overflow-y-auto rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"}
         >
           <div className="grid gap-4">
             <Section icon={Palette} title="Style">
-              <Segmented
-                label="City Style"
-                value={state.cityStyle}
-                options={[
-                  { value: "modern-glass", label: "Modern Glass" },
-                  { value: "european", label: "European" },
-                  { value: "tokyo-dense", label: "Tokyo Dense" },
-                  { value: "cyberpunk", label: "Cyberpunk" },
-                  { value: "brutalist", label: "Brutalist" },
-                ]}
-                onChange={(value) => patchState({ cityStyle: value })}
-              />
+              <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3">
+                <div className="text-xs uppercase tracking-[0.16em] text-cyan-100/68">Theme</div>
+                <div className="mt-1 text-sm font-black text-white">Tokyo Dense</div>
+                <div className="mt-1 text-xs leading-5 text-white/54">
+                  Locked showcase mode with moody avenues, mixed warm-cool window glow, and dense high-rise composition.
+                </div>
+              </div>
               <Segmented
                 label="Preset"
                 value={state.preset}
@@ -1099,12 +1583,6 @@ export function ProceduralCityEditor() {
                 ]}
                 onChange={(value) => applyPreset(value)}
               />
-            </Section>
-
-            <Section icon={Landmark} title="Skyline">
-              <SliderField label="Average Height" value={state.averageHeight} min={18} max={96} onChange={(value) => patchState({ averageHeight: value })} />
-              <SliderField label="Height Variance" value={state.heightVariance} min={4} max={68} onChange={(value) => patchState({ heightVariance: value })} />
-              <SliderField label="Density" value={state.cityDensity} min={20} max={100} suffix="%" onChange={(value) => patchState({ cityDensity: value })} />
             </Section>
 
             <Section icon={Camera} title="View">
@@ -1126,7 +1604,9 @@ export function ProceduralCityEditor() {
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.12 }}
-          className="pointer-events-auto absolute bottom-6 left-6 right-[22rem] z-10"
+          className={embedded
+            ? "pointer-events-auto absolute bottom-6 left-6 right-[20rem] z-10"
+            : "pointer-events-auto absolute bottom-6 left-6 right-[22rem] z-10"}
         >
           <div className="grid max-w-[1100px] grid-cols-2 gap-3 md:grid-cols-5">
             {[
