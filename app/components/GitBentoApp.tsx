@@ -18,7 +18,6 @@ import { GitCity } from "./GitCity";
 import { HoloCardView } from "./HoloCardView";
 import { TerminalView } from "./TerminalView";
 import { Button } from "./ui/button";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import type { GitBentoData } from "./types";
 
@@ -148,12 +147,12 @@ export function GitBentoApp() {
           </form>
         </motion.header>
 
-        <Tabs
-          value={viewMode}
-          onValueChange={(value) => setViewMode(value as ViewMode)}
-          className="items-center"
-        >
-          <TabsList>
+        <div className="flex items-center justify-center">
+          <div
+            role="tablist"
+            aria-label="GitBento view"
+            className="inline-flex w-fit items-center justify-center gap-1 rounded-2xl border border-white/10 bg-white/[0.045] p-1.5 backdrop-blur-xl"
+          >
             {[
               { id: "bento", icon: Grid3x3, label: "Bento" },
               { id: "city", icon: Blocks, label: "City" },
@@ -161,18 +160,24 @@ export function GitBentoApp() {
               { id: "terminal", icon: Terminal, label: "Terminal" },
             ].map((mode) => {
               const Icon = mode.icon;
+              const isActive = viewMode === mode.id;
+
               return (
-                <TabsTrigger
+                <button
                   key={mode.id}
-                  value={mode.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setViewMode(mode.id as ViewMode)}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-white/38 transition hover:text-white/70 aria-selected:bg-gradient-to-r aria-selected:from-cyan-500 aria-selected:to-fuchsia-500 aria-selected:text-white"
                 >
                   <Icon className="size-4" />
                   <span>{mode.label}</span>
-                </TabsTrigger>
+                </button>
               );
             })}
-          </TabsList>
-        </Tabs>
+          </div>
+        </div>
 
         {!data && !isLoading ? (
           <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-5 py-16 text-center">
