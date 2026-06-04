@@ -28,6 +28,17 @@ export type GitBentoData = {
     stars: number;
     forks: number;
   }[];
+  allRepositories: {
+    name: string;
+    url: string;
+    description: string | null;
+    language: string | null;
+    stars: number;
+    forks: number;
+    updatedAt: string;
+    pushedAt: string | null;
+    fork: boolean;
+  }[];
   organizations: {
     login: string;
     avatar: string;

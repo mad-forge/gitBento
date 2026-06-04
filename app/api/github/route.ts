@@ -515,6 +515,19 @@ export async function GET(request: Request) {
       stars: repo.stargazers_count,
       forks: repo.forks_count,
     }));
+  const allRepositories = [...repos]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((repo) => ({
+      name: repo.name,
+      url: repo.html_url,
+      description: repo.description,
+      language: repo.language,
+      stars: repo.stargazers_count,
+      forks: repo.forks_count,
+      updatedAt: repo.updated_at,
+      pushedAt: repo.pushed_at,
+      fork: repo.fork,
+    }));
   const rpg = calculateRpgStats({
     calendar: contributionCalendar,
     repos,
@@ -544,6 +557,7 @@ export async function GET(request: Request) {
     },
     topLanguages,
     topRepositories,
+    allRepositories,
     contributionCalendar,
     organizations: orgsResult.ok
       ? orgsResult.data.map((org) => ({
