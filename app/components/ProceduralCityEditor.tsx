@@ -97,6 +97,7 @@ type Cell = {
   stars: number;
   forks: number;
   activityScore: number;
+  isDecorative: boolean;
 };
 
 type RoadAxis = "x" | "z" | "junction";
@@ -187,21 +188,21 @@ const HAS_TREE_MODEL = false;
 
 const INITIAL_STATE: EditorState = {
   citySize: 28,
-  cityDensity: 72,
-  blockSize: 4,
-  streetPattern: "organic",
-  commercial: 42,
-  residential: 36,
-  industrial: 22,
-  averageHeight: 62,
-  heightVariance: 38,
-  cityStyle: "cyberpunk",
-  riverProbability: 58,
-  parksPercent: 8,
-  terrainRoughness: 24,
-  terrainStyle: "coastline",
+  cityDensity: 66,
+  blockSize: 5,
+  streetPattern: "grid",
+  commercial: 18,
+  residential: 24,
+  industrial: 58,
+  averageHeight: 44,
+  heightVariance: 24,
+  cityStyle: "brutalist",
+  riverProbability: 18,
+  parksPercent: 6,
+  terrainRoughness: 42,
+  terrainStyle: "plains",
   viewPreset: "cinematic",
-  preset: "neon-megacity",
+  preset: "industrial-belt",
 };
 
 const STYLE_THEMES: Record<CityStyle, StyleTheme> = {
@@ -455,6 +456,55 @@ function generateWindowTexture(seed: number, width: number, height: number) {
   for (let row = 1; row < rows; row += 1) {
     context.fillStyle = "rgba(255,255,255,0.04)";
     context.fillRect(0, row * cellHeight, canvas.width, 1);
+  }
+
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function generateDecorativeFacadeTexture(seed: number, width: number, height: number, baseColor: string, glowColor: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 192;
+  canvas.height = 192;
+
+  const context = canvas.getContext("2d");
+  const texture = new THREE.CanvasTexture(canvas);
+  if (!context) return texture;
+
+  const base = new THREE.Color(baseColor);
+  const facadeShade = `#${base.clone().multiplyScalar(0.86).getHexString()}`;
+  const trimShade = `#${base.clone().multiplyScalar(1.06).getHexString()}`;
+  const storefrontGlow = new THREE.Color(glowColor).multiplyScalar(1.25);
+  const upperWindowColor = seededNoise(seed, width, height) > 0.5 ? "#d8efff" : "#ffd793";
+
+  context.fillStyle = facadeShade;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = trimShade;
+  context.fillRect(0, 0, canvas.width, 10);
+  context.fillRect(0, 104, canvas.width, 8);
+
+  context.fillStyle = "#0a1119";
+  context.fillRect(0, 112, canvas.width, 56);
+
+  const bayCount = clamp(Math.round(width * 0.75), 2, 4);
+  const bayWidth = Math.floor(canvas.width / bayCount);
+  for (let index = 0; index < bayCount; index += 1) {
+    const x = index * bayWidth;
+    context.globalAlpha = 0.18 + seededNoise(seed + 17, index, 1) * 0.06;
+    context.fillStyle = `#${storefrontGlow.getHexString()}`;
+    context.fillRect(x + 8, 118, bayWidth - 16, 40);
+    context.globalAlpha = 1;
+    context.fillStyle = "#0c1620";
+    context.fillRect(x + 14, 124, bayWidth - 28, 28);
+  }
+
+  const upperWindowCount = clamp(Math.round(height - 1), 1, 2);
+  for (let index = 0; index < upperWindowCount; index += 1) {
+    const lit = seededNoise(seed + 29, index, 1) > 0.34;
+    context.fillStyle = lit ? upperWindowColor : "#111720";
+    context.fillRect(32 + index * 70, 42, 28, 16);
   }
 
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -919,6 +969,125 @@ function buildCityModel(state: EditorState, repoSignals: RepoSignal[]) {
       stars: signal.stars,
       forks: signal.forks,
       activityScore: signal.score,
+      isDecorative: false,
+    });
+  });
+
+  const decorativeRepo: RepoHint = {
+    name: "Ambient Block",
+    url: "#",
+    language: null,
+    description: "Decorative low-rise block completing the city perimeter.",
+  };
+  const occupiedPositions = cells.map((cell) => ({
+    x: cell.worldX,
+    z: cell.worldZ,
+    width: cell.width,
+    depth: cell.depth,
+  }));
+
+  const intersectsRoad = (worldX: number, worldZ: number, width: number, depth: number) => roads.some((road) => (
+    Math.abs(road.position[0] - worldX) < (road.size[0] / 2) + (width / 2) + 0.36 &&
+    Math.abs(road.position[2] - worldZ) < (road.size[2] / 2) + (depth / 2) + 0.36
+  ));
+
+  const canPlaceDecorative = (worldX: number, worldZ: number, width: number, depth: number) => {
+    const paddingX = 0.24;
+    const paddingZ = 0.24;
+
+    const overlapsCell = occupiedPositions.some((occupied) => (
+      Math.abs(occupied.x - worldX) < ((occupied.width + width) / 2) + paddingX &&
+      Math.abs(occupied.z - worldZ) < ((occupied.depth + depth) / 2) + paddingZ
+    ));
+
+    if (overlapsCell) return false;
+    if (intersectsRoad(worldX, worldZ, width, depth)) return false;
+
+    const overlapsPark = parks.some((park) => (
+      Math.abs(park.position[0] - worldX) < (park.size[0] / 2) + (width / 2) + 0.8 &&
+      Math.abs(park.position[2] - worldZ) < (park.size[2] / 2) + (depth / 2) + 0.8
+    ));
+
+    if (overlapsPark) return false;
+
+    const overlapsWater = water.some((strip) => (
+      Math.abs(strip.position[0] - worldX) < (strip.size[0] / 2) + (width / 2) + 0.6 &&
+      Math.abs(strip.position[2] - worldZ) < (strip.size[2] / 2) + (depth / 2) + 0.6
+    ));
+
+    return !overlapsWater;
+  };
+
+  const mainCells = cells.filter((cell) => !cell.isDecorative);
+  const minClusterX = Math.min(...mainCells.map((cell) => cell.worldX));
+  const maxClusterX = Math.max(...mainCells.map((cell) => cell.worldX));
+  const minClusterZ = Math.min(...mainCells.map((cell) => cell.worldZ));
+  const maxClusterZ = Math.max(...mainCells.map((cell) => cell.worldZ));
+  const decorativeStepX = 3.8;
+  const decorativeStepZ = 4.2;
+  const xSlots = Array.from(new Set(
+    mainCells
+      .map((cell) => Math.round(cell.worldX / decorativeStepX) * decorativeStepX)
+      .filter((value) => value > minClusterX - 3.4 && value < maxClusterX + 3.4),
+  )).sort((a, b) => a - b);
+  const zSlots = Array.from(new Set(
+    mainCells
+      .map((cell) => Math.round(cell.worldZ / decorativeStepZ) * decorativeStepZ)
+      .filter((value) => value > minClusterZ - 4.2 && value < maxClusterZ + 4.2),
+  )).sort((a, b) => a - b);
+  const decorativeSlots: Array<{ worldX: number; worldZ: number; zone: ZoneType }> = [];
+
+  zSlots.forEach((worldZ) => {
+    decorativeSlots.push({ worldX: minClusterX - 3.6, worldZ, zone: "commercial" });
+    decorativeSlots.push({ worldX: maxClusterX + 3.6, worldZ, zone: "industrial" });
+  });
+
+  xSlots.forEach((worldX) => {
+    decorativeSlots.push({ worldX, worldZ: minClusterZ - 4.1, zone: "commercial" });
+    decorativeSlots.push({ worldX, worldZ: maxClusterZ + 4.1, zone: "residential" });
+  });
+
+  decorativeSlots.forEach((slot, index) => {
+    const zone = slot.zone;
+    const width = zone === "industrial" ? 3.6 : zone === "residential" ? 3.2 : 3.35;
+    const depth = zone === "industrial" ? 2.55 : 2.25;
+    const height = 1.5 + seededNoise(1203, index, 1) * 2;
+    const worldX = clamp(slot.worldX, -halfWidth + 5.2, halfWidth - 5.2);
+    const worldZ = clamp(slot.worldZ, -halfDepth + 5.6, halfDepth - 5.6);
+
+    if (!canPlaceDecorative(worldX, worldZ, width, depth)) return;
+
+    const decorativeCell: Cell = {
+      x: buildingCount + index,
+      z: index,
+      worldX,
+      worldZ,
+      road: false,
+      water: false,
+      park: false,
+      zone,
+      height,
+      width,
+      depth,
+      tower: false,
+      seed: (buildingCount + index + 1) * 1499,
+      contributionCount: 0,
+      lightBands: clamp(Math.round(3 + seededNoise(1206, index, 1) * 4), 3, 6),
+      lightStrength: clamp(0.2 + seededNoise(1207, index, 1) * 0.22, 0.18, 0.42),
+      repo: decorativeRepo,
+      date: "Ambient district",
+      stars: 0,
+      forks: 0,
+      activityScore: 0.08,
+      isDecorative: true,
+    };
+
+    cells.push(decorativeCell);
+    occupiedPositions.push({
+      x: decorativeCell.worldX,
+      z: decorativeCell.worldZ,
+      width: decorativeCell.width,
+      depth: decorativeCell.depth,
     });
   });
 
@@ -1382,10 +1551,14 @@ function BuildingLot({
 }) {
   const lotWidth = cell.width + 1.25;
   const lotDepth = cell.depth + 1.35;
+  const isDecorative = cell.isDecorative;
   const isResidential = cell.zone === "residential";
-  const lotColor = isResidential ? "#142018" : cell.zone === "industrial" ? "#17191c" : "#151b22";
-  const stripColor = isResidential ? "#4f9f46" : "#5fae54";
-  const curbColor = index % 2 === 0 ? theme.roadGlow : "#ff73e8";
+  const lotColor = isDecorative
+    ? "#6d727b"
+    : isResidential ? "#142018" : cell.zone === "industrial" ? "#17191c" : "#151b22";
+  const stripColor = isDecorative ? "#69a85f" : isResidential ? "#4f9f46" : "#5fae54";
+  const curbColor = isDecorative ? "#d4b6cf" : index % 2 === 0 ? theme.roadGlow : "#ff73e8";
+  const sidewalkColor = isDecorative ? "#b6b3b8" : "#303846";
 
   return (
     <group position={[cell.worldX, 0.005, cell.worldZ]}>
@@ -1394,11 +1567,32 @@ function BuildingLot({
         <meshStandardMaterial
           color={lotColor}
           emissive={lotColor}
-          emissiveIntensity={0.06}
+          emissiveIntensity={isDecorative ? 0.02 : 0.06}
           roughness={0.62}
           metalness={isResidential ? 0.08 : 0.34}
         />
       </mesh>
+      {isDecorative ? (
+        <>
+          <group position={[0, 0.038, lotDepth * 0.38]}>
+            <mesh receiveShadow>
+              <boxGeometry args={[lotWidth * 0.94, 0.05, 0.54]} />
+              <meshStandardMaterial color={sidewalkColor} roughness={0.9} metalness={0.04} />
+            </mesh>
+          </group>
+          {[-0.34, 0.34].map((offsetX, treeIndex) => (
+            <group key={`decor-tree-${treeIndex}`} position={[lotWidth * offsetX, 0.04, lotDepth * 0.22]}>
+              <ParkTree position={[0, 0, 0]} scale={0.34 + treeIndex * 0.04} />
+            </group>
+          ))}
+          <group position={[0, 0.038, -lotDepth * 0.34]}>
+            <mesh receiveShadow>
+              <boxGeometry args={[lotWidth * 0.88, 0.045, 0.28]} />
+              <meshStandardMaterial color="#8a8f97" roughness={0.94} metalness={0.02} />
+            </mesh>
+          </group>
+        </>
+      ) : null}
       <group position={[0, 0.035, lotDepth * 0.42]}>
         <mesh receiveShadow>
           <boxGeometry args={[lotWidth * 0.86, 0.035, 0.32]} />
@@ -1444,9 +1638,9 @@ function BuildingLot({
         <mesh key={`curb-${curbIndex}`} position={[x, 0.055, z]}>
           <boxGeometry args={[width, 0.05, depth]} />
           <meshStandardMaterial
-            color="#303846"
+            color={isDecorative ? sidewalkColor : "#303846"}
             emissive={curbColor}
-            emissiveIntensity={curbIndex < 2 ? 0.12 : 0.06}
+            emissiveIntensity={isDecorative ? 0.04 : curbIndex < 2 ? 0.12 : 0.06}
             roughness={0.34}
             metalness={0.38}
           />
@@ -1502,30 +1696,34 @@ function BuildingShell({
   glowColor: string;
   cityStyle: CityStyle;
 }) {
-  const windowTexture = useMemo(
-    () => generateWindowTexture(cell.seed, Math.max(cell.width, cell.depth), cell.height),
-    [cell.depth, cell.height, cell.seed, cell.width],
+  const facadeTexture = useMemo(
+    () => cell.isDecorative
+      ? generateDecorativeFacadeTexture(cell.seed, cell.width, cell.height, baseColor, glowColor)
+      : generateWindowTexture(cell.seed, Math.max(cell.width, cell.depth), cell.height),
+    [baseColor, cell.depth, cell.height, cell.isDecorative, cell.seed, cell.width, glowColor],
   );
 
   const buildingMaterial = useMemo(() => {
     return new THREE.MeshStandardMaterial({
       color: "#ffffff",
-      map: windowTexture,
-      emissiveMap: windowTexture,
+      map: facadeTexture,
+      emissiveMap: facadeTexture,
       emissive: new THREE.Color(glowColor),
-      emissiveIntensity: cityStyle === "cyberpunk" ? 2.35 : cityStyle === "tokyo-dense" ? 2.05 : 1.55,
-      roughness: cityStyle === "cyberpunk" ? 0.42 : cityStyle === "modern-glass" ? 0.28 : 0.72,
-      metalness: cityStyle === "cyberpunk" ? 0.44 : cityStyle === "modern-glass" ? 0.78 : 0.18,
+      emissiveIntensity: cell.isDecorative
+        ? (cityStyle === "cyberpunk" ? 2.15 : 1.5)
+        : (cityStyle === "cyberpunk" ? 2.35 : cityStyle === "tokyo-dense" ? 2.05 : 1.55),
+      roughness: cell.isDecorative ? 0.7 : cityStyle === "cyberpunk" ? 0.42 : cityStyle === "modern-glass" ? 0.28 : 0.72,
+      metalness: cell.isDecorative ? 0.16 : cityStyle === "cyberpunk" ? 0.44 : cityStyle === "modern-glass" ? 0.78 : 0.18,
     });
-  }, [cityStyle, glowColor, windowTexture]);
+  }, [cell.isDecorative, cityStyle, facadeTexture, glowColor]);
 
   useEffect(() => {
     return () => buildingMaterial.dispose();
   }, [buildingMaterial]);
 
   useEffect(() => {
-    return () => windowTexture.dispose();
-  }, [windowTexture]);
+    return () => facadeTexture.dispose();
+  }, [facadeTexture]);
 
   return (
     <mesh castShadow receiveShadow material={buildingMaterial}>
@@ -1708,7 +1906,7 @@ function CityScene({
                 />
               </mesh>
             ) : null}
-            {state.cityStyle !== "cyberpunk" && hoveredCell === cellId ? <BuildingHoverCard cell={cell} /> : null}
+            {!cell.isDecorative && state.cityStyle !== "cyberpunk" && hoveredCell === cellId ? <BuildingHoverCard cell={cell} /> : null}
           </group>
         );
       })}
