@@ -1,7 +1,8 @@
 "use client";
 import { toPng } from "html-to-image";
-import { Html, OrbitControls } from "@react-three/drei";
+import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
@@ -178,6 +179,11 @@ const ROAD_SVG_SOURCE = `<?xml version="1.0" encoding="utf-8"?>
     <path d="M14.0729979,0 L9.03234845,5.5313194e-08 L9.03234845,1.04200006 L7.958,1.042 L7.958,0 L3.083,0 L1.083,16 L16.005493,16 L14.0729979,0 Z M9,15 L8,15 L8,12 L9,12 L9,15 L9,15 Z M9,10.042 L8,10.042 L8,7 L9,7 L9,10.042 L9,10.042 Z M7.958,4.959 L7.958,2.959 L8.958,2.959 L8.958,4.959 L7.958,4.959 Z" fill="#434343"></path>
   </g>
 </svg>`;
+
+const CAR_MODEL_PATH = "/car.glb";
+const TREE_MODEL_PATH = "/tree.glb";
+const HAS_CAR_MODEL = false;
+const HAS_TREE_MODEL = false;
 
 const INITIAL_STATE: EditorState = {
   citySize: 28,
@@ -397,6 +403,65 @@ function seededNoise(seed: number, x: number, y: number) {
   return value - Math.floor(value);
 }
 
+function generateWindowTexture(seed: number, width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  const cols = clamp(Math.round(width * 2.8), 4, 12);
+  const rows = clamp(Math.round(height / 4.2), 8, 28);
+  const cellWidth = 22;
+  const cellHeight = 22;
+
+  canvas.width = cols * cellWidth;
+  canvas.height = rows * cellHeight;
+
+  const context = canvas.getContext("2d");
+  const texture = new THREE.CanvasTexture(canvas);
+  if (!context) return texture;
+
+  const facadeTones = ["#1a1f28", "#171d26", "#1b222d", "#202733"];
+  const baseTone = facadeTones[Math.floor(seededNoise(seed, 0.5, 0.5) * facadeTones.length)];
+  const litChance = clamp(0.42 + seededNoise(seed, 4.2, 1.1) * 0.28, 0.38, 0.72);
+  const windowColors = ["#ffd878", "#c9ecff", "#fff1b8", "#b7d9ff"];
+
+  context.fillStyle = baseTone;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const x = col * cellWidth;
+      const y = row * cellHeight;
+      const frameInsetX = 4 + Math.floor(seededNoise(seed + 17, row, col) * 2);
+      const frameInsetY = 4 + Math.floor(seededNoise(seed + 31, col, row) * 2);
+      const windowWidth = cellWidth - (frameInsetX * 2);
+      const windowHeight = cellHeight - (frameInsetY * 2);
+      const litNoise = seededNoise(seed, col + 1, row + 1);
+      const tintNoise = seededNoise(seed + 91, row + 1, col + 1);
+      const isLit = litNoise < litChance && seededNoise(seed + 211, row, col) > 0.16;
+
+      context.fillStyle = seededNoise(seed + 301, row, col) > 0.5 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.12)";
+      context.fillRect(x, y, cellWidth, cellHeight);
+
+      context.fillStyle = isLit
+        ? windowColors[Math.floor(tintNoise * windowColors.length)]
+        : (seededNoise(seed + 401, col, row) > 0.5 ? "#0b1118" : "#121922");
+      context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, windowHeight);
+
+      if (isLit) {
+        context.fillStyle = "rgba(255,255,255,0.22)";
+        context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, Math.max(1, Math.floor(windowHeight * 0.18)));
+      }
+    }
+  }
+
+  for (let row = 1; row < rows; row += 1) {
+    context.fillStyle = "rgba(255,255,255,0.04)";
+    context.fillRect(0, row * cellHeight, canvas.width, 1);
+  }
+
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function fbm(seed: number, x: number, y: number, octaves = 4) {
   let total = 0;
   let amplitude = 0.5;
@@ -417,27 +482,6 @@ function zoneColor(theme: StyleTheme, zone: ZoneType) {
   if (zone === "commercial") return [theme.commercialBase, theme.commercialGlow] as const;
   if (zone === "industrial") return [theme.industrialBase, theme.industrialGlow] as const;
   return [theme.residentialBase, theme.residentialGlow] as const;
-}
-
-function pickWindowColor(theme: StyleTheme, cell: Cell, rowIndex: number, colIndex: number) {
-  if (cell.zone === "commercial") {
-    if (theme.skyTop === "#04110b") {
-      return seededNoise(cell.seed + 301, rowIndex, colIndex) > 0.38 ? "#f9ffb6" : "#d6ff76";
-    }
-    return seededNoise(cell.seed + 301, rowIndex, colIndex) > 0.45 ? "#9ed8ff" : "#d7ecff";
-  }
-
-  if (cell.zone === "industrial") {
-    if (theme.skyTop === "#04110b") {
-      return seededNoise(cell.seed + 302, rowIndex, colIndex) > 0.46 ? "#ffb15e" : "#ffe48e";
-    }
-    return seededNoise(cell.seed + 302, rowIndex, colIndex) > 0.5 ? "#ffb978" : "#ffdca6";
-  }
-
-  if (theme.skyTop === "#04110b") {
-    return seededNoise(cell.seed + 303, rowIndex, colIndex) > 0.48 ? "#63ff6f" : "#bfff7d";
-  }
-  return seededNoise(cell.seed + 303, rowIndex, colIndex) > 0.52 ? "#ffd88a" : "#fff1c7";
 }
 
 function pickCarPalette(style: CityStyle, seed: number) {
@@ -996,8 +1040,8 @@ function TrafficSignal({
   useFrame(({ clock }) => {
     const cycle = (clock.getElapsedTime() * 0.8 + phase) % 6;
     const activeColor = cycle < 3 ? "#ff4d4d" : "#6dff7a";
-    if (lightRef.current?.material instanceof THREE.MeshBasicMaterial) {
-      lightRef.current.material.color.set(activeColor);
+    if (lightRef.current?.material instanceof THREE.MeshStandardMaterial) {
+      lightRef.current.material.emissive.set(activeColor);
     }
   });
 
@@ -1013,7 +1057,7 @@ function TrafficSignal({
       </mesh>
       <mesh ref={lightRef} position={[0, 1.22, 0.09]}>
         <boxGeometry args={[0.07, 0.07, 0.03]} />
-        <meshBasicMaterial color={theme.roadGlow} />
+        <meshStandardMaterial color="#1a1d22" emissive={theme.roadGlow} emissiveIntensity={2.2} toneMapped={false} />
       </mesh>
     </group>
   );
@@ -1026,6 +1070,7 @@ function RoadGlyphs({
   road: RoadSegment;
   theme: StyleTheme;
 }) {
+  const glyphColor = useMemo(() => new THREE.Color(theme.roadGlow).multiplyScalar(2.4), [theme.roadGlow]);
   const glyphGeometry = useMemo(() => {
     const loader = new SVGLoader();
     const data = loader.parse(ROAD_SVG_SOURCE);
@@ -1058,7 +1103,7 @@ function RoadGlyphs({
           rotation={road.axis === "x" ? [-Math.PI / 2, 0, 0] : [-Math.PI / 2, Math.PI / 2, 0]}
         >
           <primitive object={glyphGeometry} attach="geometry" />
-          <meshBasicMaterial color={theme.roadGlow} transparent opacity={0.42} side={THREE.DoubleSide} />
+          <meshBasicMaterial color={glyphColor} transparent opacity={0.5} side={THREE.DoubleSide} toneMapped={false} />
         </mesh>
       ))}
     </>
@@ -1092,32 +1137,99 @@ function AnimatedCar({
       rotation={[0, car.axis === "x" ? (car.direction > 0 ? 0 : Math.PI) : (car.direction > 0 ? Math.PI / 2 : -Math.PI / 2), 0]}
     >
       <mesh position={[0, -0.08, 0]} receiveShadow>
-        <boxGeometry args={[car.length * 1.24, 0.03, car.width * 1.7]} />
-        <meshBasicMaterial color={car.glowColor} transparent opacity={0.18} />
+        <boxGeometry args={[car.length * 1.28, 0.03, car.width * 1.82]} />
+        <meshStandardMaterial color="#10151d" emissive={car.glowColor} emissiveIntensity={1.8} transparent opacity={0.24} />
       </mesh>
+      {HAS_CAR_MODEL ? <CarModel car={car} /> : <PrimitiveCar car={car} />}
+    </group>
+  );
+}
+
+function ParkTree({
+  position,
+  scale = 0.52,
+}: {
+  position: [number, number, number];
+  scale?: number;
+}) {
+  if (!HAS_TREE_MODEL) {
+    return (
+      <group position={position} scale={[scale, scale, scale]}>
+        <mesh position={[0, 0.18, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[0.07, 0.09, 0.34, 8]} />
+          <meshStandardMaterial color="#4a3424" roughness={0.9} />
+        </mesh>
+        <mesh position={[0, 0.52, 0]} castShadow receiveShadow>
+          <sphereGeometry args={[0.3, 10, 10]} />
+          <meshStandardMaterial color="#587f45" emissive="#294120" emissiveIntensity={0.08} roughness={0.92} />
+        </mesh>
+      </group>
+    );
+  }
+
+  return <TreeModel position={position} scale={scale} />;
+}
+
+function CarModel({
+  car,
+}: {
+  car: CarInstance;
+}) {
+  const { scene } = useGLTF(CAR_MODEL_PATH);
+  const carModel = useMemo(() => {
+    const instance = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(instance);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const footprint = Math.max(size.x, size.z, 0.001);
+    const scaleFactor = car.length / footprint;
+
+    instance.position.sub(center);
+    instance.position.y += size.y / 2;
+    instance.scale.setScalar(scaleFactor);
+    instance.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    return instance;
+  }, [car.length, scene]);
+
+  return <primitive object={carModel} />;
+}
+
+function PrimitiveCar({
+  car,
+}: {
+  car: CarInstance;
+}) {
+  return (
+    <>
       <mesh castShadow>
         <boxGeometry args={[car.length, 0.18, car.width]} />
-        <meshStandardMaterial color={car.bodyColor} emissive={car.bodyColor} emissiveIntensity={0.28} roughness={0.42} metalness={0.24} />
+        <meshStandardMaterial color={car.bodyColor} emissive={car.bodyColor} emissiveIntensity={1.2} roughness={0.42} metalness={0.24} />
       </mesh>
       <mesh position={[-0.02, 0.16, 0]} castShadow>
         <boxGeometry args={[car.length * 0.56, 0.16, car.width * 0.82]} />
-        <meshStandardMaterial color="#e8eef7" emissive="#f4f8ff" emissiveIntensity={0.2} roughness={0.18} metalness={0.3} />
+        <meshStandardMaterial color="#e8eef7" emissive="#f4f8ff" emissiveIntensity={1.35} roughness={0.18} metalness={0.3} />
       </mesh>
       <mesh position={[car.length * 0.48, 0.01, car.width * 0.19]}>
         <boxGeometry args={[0.08, 0.04, 0.04]} />
-        <meshBasicMaterial color={car.glowColor} />
+        <meshStandardMaterial color="#14181f" emissive={car.glowColor} emissiveIntensity={2} toneMapped={false} />
       </mesh>
       <mesh position={[car.length * 0.48, 0.01, -car.width * 0.19]}>
         <boxGeometry args={[0.08, 0.04, 0.04]} />
-        <meshBasicMaterial color={car.glowColor} />
+        <meshStandardMaterial color="#14181f" emissive={car.glowColor} emissiveIntensity={2} toneMapped={false} />
       </mesh>
       <mesh position={[-car.length * 0.48, 0.01, car.width * 0.19]}>
         <boxGeometry args={[0.08, 0.04, 0.04]} />
-        <meshBasicMaterial color="#ff6a5f" />
+        <meshStandardMaterial color="#191313" emissive="#ff6a5f" emissiveIntensity={1.4} toneMapped={false} />
       </mesh>
       <mesh position={[-car.length * 0.48, 0.01, -car.width * 0.19]}>
         <boxGeometry args={[0.08, 0.04, 0.04]} />
-        <meshBasicMaterial color="#ff6a5f" />
+        <meshStandardMaterial color="#191313" emissive="#ff6a5f" emissiveIntensity={1.4} toneMapped={false} />
       </mesh>
       {[-car.length * 0.28, car.length * 0.28].map((wheelX) => (
         [-car.width * 0.36, car.width * 0.36].map((wheelZ) => (
@@ -1127,6 +1239,42 @@ function AnimatedCar({
           </mesh>
         ))
       ))}
+    </>
+  );
+}
+
+function TreeModel({
+  position,
+  scale = 0.52,
+}: {
+  position: [number, number, number];
+  scale?: number;
+}) {
+  const { scene } = useGLTF(TREE_MODEL_PATH);
+  const treeModel = useMemo(() => {
+    const instance = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(instance);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const height = Math.max(size.y, 0.001);
+    const scaleFactor = scale / height;
+
+    instance.position.sub(center);
+    instance.position.y += size.y / 2;
+    instance.scale.setScalar(scaleFactor);
+    instance.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    return instance;
+  }, [scale, scene]);
+
+  return (
+    <group position={position}>
+      <primitive object={treeModel} />
     </group>
   );
 }
@@ -1343,6 +1491,49 @@ function BuildingHoverCard({ cell }: { cell: Cell }) {
   );
 }
 
+function BuildingShell({
+  cell,
+  baseColor,
+  glowColor,
+  cityStyle,
+}: {
+  cell: Cell;
+  baseColor: string;
+  glowColor: string;
+  cityStyle: CityStyle;
+}) {
+  const windowTexture = useMemo(
+    () => generateWindowTexture(cell.seed, Math.max(cell.width, cell.depth), cell.height),
+    [cell.depth, cell.height, cell.seed, cell.width],
+  );
+
+  const buildingMaterial = useMemo(() => {
+    return new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      map: windowTexture,
+      emissiveMap: windowTexture,
+      emissive: new THREE.Color(glowColor),
+      emissiveIntensity: cityStyle === "cyberpunk" ? 2.35 : cityStyle === "tokyo-dense" ? 2.05 : 1.55,
+      roughness: cityStyle === "cyberpunk" ? 0.42 : cityStyle === "modern-glass" ? 0.28 : 0.72,
+      metalness: cityStyle === "cyberpunk" ? 0.44 : cityStyle === "modern-glass" ? 0.78 : 0.18,
+    });
+  }, [cityStyle, glowColor, windowTexture]);
+
+  useEffect(() => {
+    return () => buildingMaterial.dispose();
+  }, [buildingMaterial]);
+
+  useEffect(() => {
+    return () => windowTexture.dispose();
+  }, [windowTexture]);
+
+  return (
+    <mesh castShadow receiveShadow material={buildingMaterial}>
+      <boxGeometry args={[cell.width, cell.height, cell.depth]} />
+    </mesh>
+  );
+}
+
 function CityScene({
   state,
   contributions,
@@ -1400,11 +1591,12 @@ function CityScene({
             <boxGeometry args={park.size} />
             <meshStandardMaterial color={theme.park} emissive={theme.park} emissiveIntensity={0.06} />
           </mesh>
-          {[-0.32, 0.24].map((offsetX) => (
-            <mesh key={offsetX} position={[offsetX, 0.3, 0.12]} castShadow>
-              <coneGeometry args={[0.22, 0.58, 6]} />
-              <meshStandardMaterial color="#3b6d3a" />
-            </mesh>
+          {[-0.32, 0.24].map((offsetX, treeIndex) => (
+            <ParkTree
+              key={`${offsetX}-${treeIndex}`}
+              position={[offsetX, 0.02, 0.12]}
+              scale={0.62 + treeIndex * 0.06}
+            />
           ))}
         </group>
       ))}
@@ -1420,7 +1612,7 @@ function CityScene({
             <meshStandardMaterial
               color={theme.road}
               emissive={theme.roadGlow}
-              emissiveIntensity={state.cityStyle === "cyberpunk" ? 0.045 : state.cityStyle === "tokyo-dense" ? 0.12 : 0.06}
+              emissiveIntensity={state.cityStyle === "cyberpunk" ? 2.2 : state.cityStyle === "tokyo-dense" ? 2.05 : 0.24}
               roughness={state.cityStyle === "cyberpunk" ? 0.24 : 0.96}
               metalness={state.cityStyle === "cyberpunk" ? 0.56 : 0.05}
             />
@@ -1431,23 +1623,19 @@ function CityScene({
                 <boxGeometry args={[road.axis === "x" ? road.size[0] : road.size[0] * 0.28, 0.012, road.axis === "x" ? road.size[2] * 0.28 : road.size[2]]} />
                 <meshStandardMaterial color="#0b0e14" roughness={1} />
               </mesh>
-              {[-0.18, 0.18].map((offset) => (
-                <mesh
-                  key={offset}
-                  position={road.axis === "x" ? [0, 0.035, offset] : [offset, 0.035, 0]}
-                  rotation={road.axis === "x" ? [-Math.PI / 2, 0, 0] : [-Math.PI / 2, Math.PI / 2, 0]}
-                >
-                  <planeGeometry args={[road.axis === "x" ? road.size[0] * 0.72 : road.size[2] * 0.72, 0.018]} />
-                  <meshBasicMaterial color={theme.roadGlow} transparent opacity={state.cityStyle === "cyberpunk" ? 0.32 : 0.2} />
-                </mesh>
-              ))}
               <RoadGlyphs road={road} theme={theme} />
             </>
           ) : (
             <>
               <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.036, 0]}>
                 <ringGeometry args={[road.size[0] * 0.08, road.size[0] * 0.18, 18]} />
-                <meshBasicMaterial color={theme.roadGlow} transparent opacity={0.18} side={THREE.DoubleSide} />
+                <meshBasicMaterial
+                  color={new THREE.Color(theme.roadGlow).multiplyScalar(2.1)}
+                  transparent
+                  opacity={0.24}
+                  side={THREE.DoubleSide}
+                  toneMapped={false}
+                />
               </mesh>
               {Math.abs(road.position[0]) > (model.bounds.width / 2) - 4 &&
               Math.abs(road.position[2]) > (model.bounds.depth / 2) - 4
@@ -1475,9 +1663,6 @@ function CityScene({
       {model.cells.map((cell) => {
         const [baseColor, glowColor] = zoneColor(theme, cell.zone);
         const cellId = `${cell.x}-${cell.z}`;
-        const windowRows = clamp(cell.lightBands + (state.cityStyle === "cyberpunk" ? 3 : 0), 4, 14);
-        const windowCols = clamp(Math.round((cell.width / 0.18) * (state.cityStyle === "cyberpunk" ? 1.05 : 0.7)), 3, 6);
-        const sideWindowCols = clamp(Math.round((cell.depth / 0.18) * (state.cityStyle === "cyberpunk" ? 0.95 : 0.7)), 3, 6);
         return (
           <group
             key={cellId}
@@ -1491,16 +1676,12 @@ function CityScene({
               setHoveredCell((current) => (current === cellId ? null : current));
             }}
           >
-            <mesh castShadow receiveShadow>
-              <boxGeometry args={[cell.width, cell.height, cell.depth]} />
-              <meshStandardMaterial
-                color={baseColor}
-                emissive={baseColor}
-                emissiveIntensity={state.cityStyle === "cyberpunk" ? 0.08 : state.cityStyle === "tokyo-dense" ? 0.09 : 0.05}
-                roughness={state.cityStyle === "cyberpunk" ? 0.42 : state.cityStyle === "modern-glass" ? 0.28 : 0.72}
-                metalness={state.cityStyle === "cyberpunk" ? 0.48 : state.cityStyle === "modern-glass" ? 0.78 : 0.18}
-              />
-            </mesh>
+            <BuildingShell
+              cell={cell}
+              baseColor={baseColor}
+              glowColor={glowColor}
+              cityStyle={state.cityStyle}
+            />
             <mesh position={[0, -cell.height / 2 + 0.28, 0]} castShadow receiveShadow>
               <boxGeometry args={[cell.width * 1.08, 0.56, cell.depth * 1.08]} />
               <meshStandardMaterial
@@ -1527,64 +1708,6 @@ function CityScene({
                 />
               </mesh>
             ) : null}
-            {[
-              [-(cell.width / 2) - 0.012, 0, 0, 0.024, cell.height * 0.96, cell.depth * 1.01],
-              [(cell.width / 2) + 0.012, 0, 0, 0.024, cell.height * 0.96, cell.depth * 1.01],
-            ].map(([x, y, z, width, height, depth], edgeIndex) => (
-              <mesh key={`edge-${edgeIndex}`} position={[x, y, z]}>
-                <boxGeometry args={[width, height, depth]} />
-                <meshStandardMaterial color="#5b6470" emissive="#c8d8ff" emissiveIntensity={0.03} roughness={0.42} metalness={0.38} />
-              </mesh>
-            ))}
-            <mesh position={[0, 0, cell.depth / 2 + 0.015]}>
-              <planeGeometry args={[cell.width * 1.04, cell.height * 1.02]} />
-              <meshBasicMaterial color={glowColor} transparent opacity={state.cityStyle === "cyberpunk" ? 0.045 : 0.04} depthWrite={false} />
-            </mesh>
-            <mesh position={[0, cell.height / 2 + 0.7, 0]} castShadow>
-              <boxGeometry args={[0.07, 1.4, 0.07]} />
-              <meshStandardMaterial color="#293244" emissive="#4d5d7d" emissiveIntensity={0.18} />
-            </mesh>
-            <mesh position={[0, cell.height / 2 + 1.45, 0]}>
-              <sphereGeometry args={[0.08, 8, 8]} />
-              <meshBasicMaterial color={seededNoise(cell.seed, 90, 1) > 0.5 ? "#ff5d76" : "#6ce7ff"} />
-            </mesh>
-
-            {Array.from({ length: windowRows }, (_, rowIndex) => {
-              const y = -cell.height / 2 + ((rowIndex + 1) / (windowRows + 1)) * cell.height;
-              return Array.from({ length: windowCols }, (_, colIndex) => {
-                const x = ((colIndex + 1) / (windowCols + 1) - 0.5) * cell.width * 0.72;
-                const lit = seededNoise(cell.seed, rowIndex + 1, colIndex + 1) < clamp(0.48 + (cell.contributionCount / Math.max(1, cell.contributionCount + 6)), 0.42, 0.94);
-                return (
-                  <mesh key={`front-${rowIndex}-${colIndex}`} position={[x, y, cell.depth / 2 + 0.01]}>
-                    <planeGeometry args={[cell.width * 0.12, Math.max(0.1, cell.height / (windowRows * 5.4))]} />
-                    <meshBasicMaterial
-                      color={pickWindowColor(theme, cell, rowIndex, colIndex)}
-                      transparent
-                      opacity={lit ? Math.max(cell.lightStrength, 0.52) : 0.08}
-                    />
-                  </mesh>
-                );
-              });
-            })}
-
-            {Array.from({ length: windowRows - 1 }, (_, rowIndex) => {
-              const y = -cell.height / 2 + ((rowIndex + 1) / windowRows) * cell.height;
-              return Array.from({ length: sideWindowCols }, (_, colIndex) => {
-                const z = ((colIndex + 1) / (sideWindowCols + 1) - 0.5) * cell.depth * 0.72;
-                const lit = seededNoise(cell.seed + 17, rowIndex + 1, colIndex + 1) < clamp(0.38 + (cell.contributionCount / Math.max(1, cell.contributionCount + 7)), 0.34, 0.86);
-                return (
-                  <mesh key={`side-${rowIndex}-${colIndex}`} position={[cell.width / 2 + 0.01, y, z]} rotation={[0, Math.PI / 2, 0]}>
-                    <planeGeometry args={[cell.depth * 0.12, Math.max(0.09, cell.height / (windowRows * 5.8))]} />
-                    <meshBasicMaterial
-                      color={pickWindowColor(theme, cell, rowIndex, colIndex)}
-                      transparent
-                      opacity={lit ? Math.max(cell.lightStrength * 0.82, 0.4) : 0.06}
-                    />
-                  </mesh>
-                );
-              });
-            })}
-
             {state.cityStyle !== "cyberpunk" && hoveredCell === cellId ? <BuildingHoverCard cell={cell} /> : null}
           </group>
         );
@@ -1600,6 +1723,9 @@ function CityScene({
         minPolarAngle={0.22}
         maxPolarAngle={Math.PI / 2.02}
       />
+      <EffectComposer enableNormalPass={false} multisampling={0}>
+        <Bloom mipmapBlur luminanceThreshold={1} intensity={1.5} />
+      </EffectComposer>
     </>
   );
 }
@@ -2115,4 +2241,12 @@ export function ProceduralCityEditor({
       </div>
     </main>
   );
+}
+
+if (HAS_CAR_MODEL) {
+  useGLTF.preload(CAR_MODEL_PATH);
+}
+
+if (HAS_TREE_MODEL) {
+  useGLTF.preload(TREE_MODEL_PATH);
 }
