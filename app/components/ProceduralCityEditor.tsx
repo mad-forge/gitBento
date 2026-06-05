@@ -1,11 +1,10 @@
 "use client";
 import { toPng } from "html-to-image";
-import { Html, OrbitControls, useGLTF } from "@react-three/drei";
+import { OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { motion } from "motion/react";
-import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 import {
   Aperture,
   Building2,
@@ -24,162 +23,29 @@ import {
   Waves,
 } from "lucide-react";
 import * as THREE from "three";
+import { BuildingHoverCard, BuildingLot, BuildingShell } from "./procedural-city-editor/buildings";
+import { ProceduralRoad } from "./procedural-city-editor/roads/ProceduralRoad";
+import type {
+  CarInstance,
+  Cell,
+  CityModel,
+  CityStyle,
+  EditorState,
+  ParkPatch,
+  PresetName,
+  ProfileSnapshot,
+  RepoHint,
+  RepoSignal,
+  RoadSegment,
+  StyleTheme,
+  TerrainRidge,
+  ThemeMeta,
+  ViewPreset,
+  WaterStrip,
+  ZoneType,
+} from "./procedural-city-editor/types";
+import { clamp, seededNoise, zoneColor } from "./procedural-city-editor/utils";
 import type { GitBentoData } from "./types";
-
-type StreetPattern = "grid" | "organic" | "radial";
-type CityStyle = "modern-glass" | "european" | "tokyo-dense" | "cyberpunk" | "brutalist";
-type TerrainStyle = "coastline" | "mountains" | "plains";
-type ViewPreset = "orbit" | "overhead" | "cinematic";
-type PresetName = "neon-megacity" | "balanced-core" | "industrial-belt" | "residential-area" | "river-port";
-type ZoneType = "commercial" | "residential" | "industrial";
-
-type EditorState = {
-  citySize: number;
-  cityDensity: number;
-  blockSize: number;
-  streetPattern: StreetPattern;
-  commercial: number;
-  residential: number;
-  industrial: number;
-  averageHeight: number;
-  heightVariance: number;
-  cityStyle: CityStyle;
-  riverProbability: number;
-  parksPercent: number;
-  terrainRoughness: number;
-  terrainStyle: TerrainStyle;
-  viewPreset: ViewPreset;
-  preset: PresetName;
-};
-
-type StyleTheme = {
-  skyTop: string;
-  skyBottom: string;
-  fog: string;
-  ground: string;
-  road: string;
-  roadGlow: string;
-  water: string;
-  park: string;
-  commercialBase: string;
-  commercialGlow: string;
-  residentialBase: string;
-  residentialGlow: string;
-  industrialBase: string;
-  industrialGlow: string;
-  accent: string;
-};
-
-type ThemeMeta = {
-  label: string;
-  description: string;
-};
-
-type Cell = {
-  x: number;
-  z: number;
-  worldX: number;
-  worldZ: number;
-  road: false;
-  water: false;
-  park: false;
-  zone: ZoneType;
-  height: number;
-  width: number;
-  depth: number;
-  tower: boolean;
-  seed: number;
-  contributionCount: number;
-  lightBands: number;
-  lightStrength: number;
-  repo: RepoHint;
-  date: string;
-  stars: number;
-  forks: number;
-  activityScore: number;
-  isDecorative: boolean;
-};
-
-type RoadAxis = "x" | "z" | "junction";
-
-type RoadSegment = {
-  axis: RoadAxis;
-  position: [number, number, number];
-  size: [number, number, number];
-};
-
-type CarInstance = {
-  axis: Exclude<RoadAxis, "junction">;
-  position: [number, number, number];
-  bodyColor: string;
-  glowColor: string;
-  direction: 1 | -1;
-  length: number;
-  width: number;
-  speed: number;
-  phase: number;
-  travelSpan: number;
-};
-
-type ParkPatch = {
-  position: [number, number, number];
-  size: [number, number, number];
-};
-
-type WaterStrip = {
-  position: [number, number, number];
-  size: [number, number, number];
-};
-
-type TerrainRidge = {
-  position: [number, number, number];
-  radius: number;
-  height: number;
-};
-
-type CityModel = {
-  cells: Cell[];
-  roads: RoadSegment[];
-  cars: CarInstance[];
-  parks: ParkPatch[];
-  water: WaterStrip[];
-  ridges: TerrainRidge[];
-  bounds: { width: number; depth: number };
-};
-
-type ProfileSnapshot = {
-  username: string;
-  name: string;
-  totalContributions: number;
-  publicRepos: number;
-  stars: number;
-  longestStreak: number;
-  topLanguage: string;
-};
-
-type RepoHint = {
-  name: string;
-  url: string;
-  language: string | null;
-  description: string | null;
-};
-
-type RepoSignal = {
-  repo: RepoHint;
-  activityCount: number;
-  stars: number;
-  forks: number;
-  score: number;
-  updatedAt: string | null;
-  index: number;
-};
-
-const ROAD_SVG_SOURCE = `<?xml version="1.0" encoding="utf-8"?>
-<svg width="800px" height="800px" viewBox="0 -0.5 17 17" version="1.1" xmlns="http://www.w3.org/2000/svg">
-  <g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
-    <path d="M14.0729979,0 L9.03234845,5.5313194e-08 L9.03234845,1.04200006 L7.958,1.042 L7.958,0 L3.083,0 L1.083,16 L16.005493,16 L14.0729979,0 Z M9,15 L8,15 L8,12 L9,12 L9,15 L9,15 Z M9,10.042 L8,10.042 L8,7 L9,7 L9,10.042 L9,10.042 Z M7.958,4.959 L7.958,2.959 L8.958,2.959 L8.958,4.959 L7.958,4.959 Z" fill="#434343"></path>
-  </g>
-</svg>`;
 
 const CAR_MODEL_PATH = "/car.glb";
 const TREE_MODEL_PATH = "/tree.glb";
@@ -395,123 +261,6 @@ const PRESET_PATCHES: Record<PresetName, Partial<EditorState>> = {
   },
 };
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function seededNoise(seed: number, x: number, y: number) {
-  const value = Math.sin((x * 127.1) + (y * 311.7) + (seed * 91.1)) * 43758.5453123;
-  return value - Math.floor(value);
-}
-
-function generateWindowTexture(seed: number, width: number, height: number) {
-  const canvas = document.createElement("canvas");
-  const cols = clamp(Math.round(width * 2.8), 4, 12);
-  const rows = clamp(Math.round(height / 4.2), 8, 28);
-  const cellWidth = 22;
-  const cellHeight = 22;
-
-  canvas.width = cols * cellWidth;
-  canvas.height = rows * cellHeight;
-
-  const context = canvas.getContext("2d");
-  const texture = new THREE.CanvasTexture(canvas);
-  if (!context) return texture;
-
-  const facadeTones = ["#1a1f28", "#171d26", "#1b222d", "#202733"];
-  const baseTone = facadeTones[Math.floor(seededNoise(seed, 0.5, 0.5) * facadeTones.length)];
-  const litChance = clamp(0.42 + seededNoise(seed, 4.2, 1.1) * 0.28, 0.38, 0.72);
-  const windowColors = ["#ffd878", "#c9ecff", "#fff1b8", "#b7d9ff"];
-
-  context.fillStyle = baseTone;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const x = col * cellWidth;
-      const y = row * cellHeight;
-      const frameInsetX = 4 + Math.floor(seededNoise(seed + 17, row, col) * 2);
-      const frameInsetY = 4 + Math.floor(seededNoise(seed + 31, col, row) * 2);
-      const windowWidth = cellWidth - (frameInsetX * 2);
-      const windowHeight = cellHeight - (frameInsetY * 2);
-      const litNoise = seededNoise(seed, col + 1, row + 1);
-      const tintNoise = seededNoise(seed + 91, row + 1, col + 1);
-      const isLit = litNoise < litChance && seededNoise(seed + 211, row, col) > 0.16;
-
-      context.fillStyle = seededNoise(seed + 301, row, col) > 0.5 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.12)";
-      context.fillRect(x, y, cellWidth, cellHeight);
-
-      context.fillStyle = isLit
-        ? windowColors[Math.floor(tintNoise * windowColors.length)]
-        : (seededNoise(seed + 401, col, row) > 0.5 ? "#0b1118" : "#121922");
-      context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, windowHeight);
-
-      if (isLit) {
-        context.fillStyle = "rgba(255,255,255,0.22)";
-        context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, Math.max(1, Math.floor(windowHeight * 0.18)));
-      }
-    }
-  }
-
-  for (let row = 1; row < rows; row += 1) {
-    context.fillStyle = "rgba(255,255,255,0.04)";
-    context.fillRect(0, row * cellHeight, canvas.width, 1);
-  }
-
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function generateDecorativeFacadeTexture(seed: number, width: number, height: number, baseColor: string, glowColor: string) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 192;
-  canvas.height = 192;
-
-  const context = canvas.getContext("2d");
-  const texture = new THREE.CanvasTexture(canvas);
-  if (!context) return texture;
-
-  const base = new THREE.Color(baseColor);
-  const facadeShade = `#${base.clone().multiplyScalar(0.86).getHexString()}`;
-  const trimShade = `#${base.clone().multiplyScalar(1.06).getHexString()}`;
-  const storefrontGlow = new THREE.Color(glowColor).multiplyScalar(1.25);
-  const upperWindowColor = seededNoise(seed, width, height) > 0.5 ? "#d8efff" : "#ffd793";
-
-  context.fillStyle = facadeShade;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  context.fillStyle = trimShade;
-  context.fillRect(0, 0, canvas.width, 10);
-  context.fillRect(0, 104, canvas.width, 8);
-
-  context.fillStyle = "#0a1119";
-  context.fillRect(0, 112, canvas.width, 56);
-
-  const bayCount = clamp(Math.round(width * 0.75), 2, 4);
-  const bayWidth = Math.floor(canvas.width / bayCount);
-  for (let index = 0; index < bayCount; index += 1) {
-    const x = index * bayWidth;
-    context.globalAlpha = 0.18 + seededNoise(seed + 17, index, 1) * 0.06;
-    context.fillStyle = `#${storefrontGlow.getHexString()}`;
-    context.fillRect(x + 8, 118, bayWidth - 16, 40);
-    context.globalAlpha = 1;
-    context.fillStyle = "#0c1620";
-    context.fillRect(x + 14, 124, bayWidth - 28, 28);
-  }
-
-  const upperWindowCount = clamp(Math.round(height - 1), 1, 2);
-  for (let index = 0; index < upperWindowCount; index += 1) {
-    const lit = seededNoise(seed + 29, index, 1) > 0.34;
-    context.fillStyle = lit ? upperWindowColor : "#111720";
-    context.fillRect(32 + index * 70, 42, 28, 16);
-  }
-
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
 function fbm(seed: number, x: number, y: number, octaves = 4) {
   let total = 0;
   let amplitude = 0.5;
@@ -526,12 +275,6 @@ function fbm(seed: number, x: number, y: number, octaves = 4) {
   }
 
   return sum > 0 ? total / sum : 0;
-}
-
-function zoneColor(theme: StyleTheme, zone: ZoneType) {
-  if (zone === "commercial") return [theme.commercialBase, theme.commercialGlow] as const;
-  if (zone === "industrial") return [theme.industrialBase, theme.industrialGlow] as const;
-  return [theme.residentialBase, theme.residentialGlow] as const;
 }
 
 function pickCarPalette(style: CityStyle, seed: number) {
@@ -1195,90 +938,6 @@ function Terrain({ bounds, theme }: { bounds: CityModel["bounds"]; theme: StyleT
   );
 }
 
-function TrafficSignal({
-  position,
-  theme,
-  phase,
-}: {
-  position: [number, number, number];
-  theme: StyleTheme;
-  phase: number;
-}) {
-  const lightRef = useRef<THREE.Mesh>(null);
-
-  useFrame(({ clock }) => {
-    const cycle = (clock.getElapsedTime() * 0.8 + phase) % 6;
-    const activeColor = cycle < 3 ? "#ff4d4d" : "#6dff7a";
-    if (lightRef.current?.material instanceof THREE.MeshStandardMaterial) {
-      lightRef.current.material.emissive.set(activeColor);
-    }
-  });
-
-  return (
-    <group position={position}>
-      <mesh position={[0, 0.6, 0]} castShadow>
-        <boxGeometry args={[0.06, 1.2, 0.06]} />
-        <meshStandardMaterial color="#505761" />
-      </mesh>
-      <mesh position={[0, 1.2, 0]} castShadow>
-        <boxGeometry args={[0.16, 0.32, 0.16]} />
-        <meshStandardMaterial color="#171b22" />
-      </mesh>
-      <mesh ref={lightRef} position={[0, 1.22, 0.09]}>
-        <boxGeometry args={[0.07, 0.07, 0.03]} />
-        <meshStandardMaterial color="#1a1d22" emissive={theme.roadGlow} emissiveIntensity={2.2} toneMapped={false} />
-      </mesh>
-    </group>
-  );
-}
-
-function RoadGlyphs({
-  road,
-  theme,
-}: {
-  road: RoadSegment;
-  theme: StyleTheme;
-}) {
-  const glyphColor = useMemo(() => new THREE.Color(theme.roadGlow).multiplyScalar(2.4), [theme.roadGlow]);
-  const glyphGeometry = useMemo(() => {
-    const loader = new SVGLoader();
-    const data = loader.parse(ROAD_SVG_SOURCE);
-    const shapes = data.paths.flatMap((path) => SVGLoader.createShapes(path));
-    const geometry = new THREE.ShapeGeometry(shapes);
-    geometry.computeBoundingBox();
-    const box = geometry.boundingBox;
-    if (box) {
-      const width = box.max.x - box.min.x || 1;
-      const height = box.max.y - box.min.y || 1;
-      const scale = 0.22 / Math.max(width, height);
-      geometry.translate(-(box.min.x + width / 2), -(box.min.y + height / 2), 0);
-      geometry.scale(scale, scale, 1);
-    }
-    return geometry;
-  }, []);
-  const span = road.axis === "x" ? road.size[0] : road.size[2];
-  const count = clamp(Math.floor(span / 2.6), 2, 14);
-  const marks = useMemo(
-    () => Array.from({ length: count }, (_, index) => -span / 2 + ((index + 0.5) * span) / count),
-    [count, span],
-  );
-
-  return (
-    <>
-      {marks.map((offset) => (
-        <mesh
-          key={offset}
-          position={road.axis === "x" ? [offset, 0.038, 0] : [0, 0.038, offset]}
-          rotation={road.axis === "x" ? [-Math.PI / 2, 0, 0] : [-Math.PI / 2, Math.PI / 2, 0]}
-        >
-          <primitive object={glyphGeometry} attach="geometry" />
-          <meshBasicMaterial color={glyphColor} transparent opacity={0.5} side={THREE.DoubleSide} toneMapped={false} />
-        </mesh>
-      ))}
-    </>
-  );
-}
-
 function AnimatedCar({
   car,
 }: {
@@ -1448,290 +1107,6 @@ function TreeModel({
   );
 }
 
-function GrassStrip({
-  width,
-  depth,
-  seed,
-  density = 180,
-}: {
-  width: number;
-  depth: number;
-  seed: number;
-  density?: number;
-}) {
-  const bladeCount = clamp(Math.round(width * depth * density), 45, 180);
-  const grassGeometry = useMemo(() => {
-    const firstBlade = new THREE.PlaneGeometry(0.065, 0.28);
-    firstBlade.translate(0, 0.14, 0);
-    const secondBlade = firstBlade.clone();
-    secondBlade.rotateY(Math.PI / 2);
-    const geometry = new THREE.BufferGeometry();
-    const firstPosition = firstBlade.getAttribute("position");
-    const secondPosition = secondBlade.getAttribute("position");
-    const firstUv = firstBlade.getAttribute("uv");
-    const secondUv = secondBlade.getAttribute("uv");
-    const positions = new Float32Array(firstPosition.count * 3 + secondPosition.count * 3);
-    const uvs = new Float32Array(firstUv.count * 2 + secondUv.count * 2);
-    positions.set(firstPosition.array as Float32Array, 0);
-    positions.set(secondPosition.array as Float32Array, firstPosition.count * 3);
-    uvs.set(firstUv.array as Float32Array, 0);
-    uvs.set(secondUv.array as Float32Array, firstUv.count * 2);
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex([0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7]);
-    firstBlade.dispose();
-    secondBlade.dispose();
-    return geometry;
-  }, []);
-  const grassMaterial = useMemo(
-    () => new THREE.MeshBasicMaterial({
-      vertexColors: true,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.96,
-    }),
-    [],
-  );
-  const matrices = useMemo(() => {
-    const matrix = new THREE.Matrix4();
-    const position = new THREE.Vector3();
-    const rotation = new THREE.Euler();
-    const scale = new THREE.Vector3();
-
-    return Array.from({ length: bladeCount }, (_, index) => {
-      position.set(
-        (seededNoise(seed, index, 1) - 0.5) * width,
-        0,
-        (seededNoise(seed, index, 2) - 0.5) * depth,
-      );
-      rotation.set(
-        (seededNoise(seed, index, 3) - 0.5) * 0.36,
-        seededNoise(seed, index, 4) * Math.PI,
-        (seededNoise(seed, index, 5) - 0.5) * 0.42,
-      );
-      const bladeScale = 1 + seededNoise(seed, index, 6) * 1.15;
-      scale.set(1.35 + seededNoise(seed, index, 7) * 0.9, bladeScale, 1);
-      matrix.compose(position, new THREE.Quaternion().setFromEuler(rotation), scale);
-      return matrix.clone();
-    });
-  }, [bladeCount, depth, seed, width]);
-  const colors = useMemo(() => {
-    const palette = ["#66c85a", "#7adf68", "#8eea78", "#a4f08a"];
-    return Array.from({ length: bladeCount }, (_, index) => {
-      const color = new THREE.Color(palette[Math.floor(seededNoise(seed, index, 8) * palette.length)]);
-      color.multiplyScalar(0.9 + seededNoise(seed, index, 9) * 0.3);
-      return color;
-    });
-  }, [bladeCount, seed]);
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-
-  useEffect(() => {
-    if (!meshRef.current) return;
-    matrices.forEach((matrix, index) => {
-      meshRef.current?.setMatrixAt(index, matrix);
-      meshRef.current?.setColorAt(index, colors[index]);
-    });
-    meshRef.current.instanceMatrix.needsUpdate = true;
-    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
-  }, [colors, matrices]);
-
-  return (
-    <instancedMesh ref={meshRef} args={[grassGeometry, grassMaterial, bladeCount]} />
-  );
-}
-
-function BuildingLot({
-  cell,
-  index,
-  theme,
-}: {
-  cell: Cell;
-  index: number;
-  theme: StyleTheme;
-}) {
-  const lotWidth = cell.width + 1.25;
-  const lotDepth = cell.depth + 1.35;
-  const isDecorative = cell.isDecorative;
-  const isResidential = cell.zone === "residential";
-  const lotColor = isDecorative
-    ? "#6d727b"
-    : isResidential ? "#142018" : cell.zone === "industrial" ? "#17191c" : "#151b22";
-  const stripColor = isDecorative ? "#69a85f" : isResidential ? "#4f9f46" : "#5fae54";
-  const curbColor = isDecorative ? "#d4b6cf" : index % 2 === 0 ? theme.roadGlow : "#ff73e8";
-  const sidewalkColor = isDecorative ? "#b6b3b8" : "#303846";
-
-  return (
-    <group position={[cell.worldX, 0.005, cell.worldZ]}>
-      <mesh receiveShadow>
-        <boxGeometry args={[lotWidth, 0.04, lotDepth]} />
-        <meshStandardMaterial
-          color={lotColor}
-          emissive={lotColor}
-          emissiveIntensity={isDecorative ? 0.02 : 0.06}
-          roughness={0.62}
-          metalness={isResidential ? 0.08 : 0.34}
-        />
-      </mesh>
-      {isDecorative ? (
-        <>
-          <group position={[0, 0.038, lotDepth * 0.38]}>
-            <mesh receiveShadow>
-              <boxGeometry args={[lotWidth * 0.94, 0.05, 0.54]} />
-              <meshStandardMaterial color={sidewalkColor} roughness={0.9} metalness={0.04} />
-            </mesh>
-          </group>
-          {[-0.34, 0.34].map((offsetX, treeIndex) => (
-            <group key={`decor-tree-${treeIndex}`} position={[lotWidth * offsetX, 0.04, lotDepth * 0.22]}>
-              <ParkTree position={[0, 0, 0]} scale={0.34 + treeIndex * 0.04} />
-            </group>
-          ))}
-          <group position={[0, 0.038, -lotDepth * 0.34]}>
-            <mesh receiveShadow>
-              <boxGeometry args={[lotWidth * 0.88, 0.045, 0.28]} />
-              <meshStandardMaterial color="#8a8f97" roughness={0.94} metalness={0.02} />
-            </mesh>
-          </group>
-        </>
-      ) : null}
-      <group position={[0, 0.035, lotDepth * 0.42]}>
-        <mesh receiveShadow>
-          <boxGeometry args={[lotWidth * 0.86, 0.035, 0.32]} />
-          <meshStandardMaterial color={stripColor} emissive={stripColor} emissiveIntensity={0.22} roughness={0.82} />
-        </mesh>
-        <group position={[0, 0.04, 0]}>
-          <GrassStrip width={lotWidth * 0.8} depth={0.32} seed={cell.seed + 411} density={280} />
-        </group>
-      </group>
-      <group position={[0, 0.035, -lotDepth * 0.42]}>
-        <mesh receiveShadow>
-          <boxGeometry args={[lotWidth * 0.86, 0.035, 0.32]} />
-          <meshStandardMaterial color={stripColor} emissive={stripColor} emissiveIntensity={0.22} roughness={0.82} />
-        </mesh>
-        <group position={[0, 0.04, 0]}>
-          <GrassStrip width={lotWidth * 0.8} depth={0.32} seed={cell.seed + 733} density={280} />
-        </group>
-      </group>
-      <group position={[lotWidth * 0.42, 0.035, 0]}>
-        <mesh receiveShadow>
-          <boxGeometry args={[0.28, 0.035, lotDepth * 0.72]} />
-          <meshStandardMaterial color={stripColor} emissive={stripColor} emissiveIntensity={0.22} roughness={0.82} />
-        </mesh>
-        <group position={[0, 0.04, 0]}>
-          <GrassStrip width={0.28} depth={lotDepth * 0.68} seed={cell.seed + 977} density={300} />
-        </group>
-      </group>
-      <group position={[-lotWidth * 0.42, 0.035, 0]}>
-        <mesh receiveShadow>
-          <boxGeometry args={[0.28, 0.035, lotDepth * 0.72]} />
-          <meshStandardMaterial color={stripColor} emissive={stripColor} emissiveIntensity={0.22} roughness={0.82} />
-        </mesh>
-        <group position={[0, 0.04, 0]}>
-          <GrassStrip width={0.28} depth={lotDepth * 0.68} seed={cell.seed + 1229} density={300} />
-        </group>
-      </group>
-      {[
-        [0, lotDepth / 2, lotWidth, 0.06],
-        [0, -lotDepth / 2, lotWidth, 0.06],
-        [lotWidth / 2, 0, 0.06, lotDepth],
-        [-lotWidth / 2, 0, 0.06, lotDepth],
-      ].map(([x, z, width, depth], curbIndex) => (
-        <mesh key={`curb-${curbIndex}`} position={[x, 0.055, z]}>
-          <boxGeometry args={[width, 0.05, depth]} />
-          <meshStandardMaterial
-            color={isDecorative ? sidewalkColor : "#303846"}
-            emissive={curbColor}
-            emissiveIntensity={isDecorative ? 0.04 : curbIndex < 2 ? 0.12 : 0.06}
-            roughness={0.34}
-            metalness={0.38}
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-function BuildingHoverCard({ cell }: { cell: Cell }) {
-  return (
-    <Html position={[0, cell.height / 2 + 1.1, 0]} center distanceFactor={10} occlude>
-      <div className="w-56 rounded-2xl border border-white/12 bg-[rgba(7,10,16,0.94)] p-3 text-left shadow-[0_16px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-200/70">Repo Tower</div>
-        <div className="mt-1 text-sm font-black text-white">{cell.repo.name}</div>
-        <div className="mt-1 text-xs text-white/68">{cell.date}</div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
-            <div className="text-white/45">Activity</div>
-            <div className="mt-1 font-bold text-white">{cell.contributionCount}</div>
-          </div>
-          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
-            <div className="text-white/45">Language</div>
-            <div className="mt-1 font-bold text-white">{cell.repo.language ?? "Mixed"}</div>
-          </div>
-          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
-            <div className="text-white/45">Stars</div>
-            <div className="mt-1 font-bold text-white">{cell.stars}</div>
-          </div>
-          <div className="rounded-xl bg-white/[0.04] px-2 py-1.5">
-            <div className="text-white/45">Forks</div>
-            <div className="mt-1 font-bold text-white">{cell.forks}</div>
-          </div>
-        </div>
-        {cell.repo.description ? (
-          <div className="mt-2 line-clamp-3 text-[11px] leading-4 text-white/58">
-            {cell.repo.description}
-          </div>
-        ) : null}
-      </div>
-    </Html>
-  );
-}
-
-function BuildingShell({
-  cell,
-  baseColor,
-  glowColor,
-  cityStyle,
-}: {
-  cell: Cell;
-  baseColor: string;
-  glowColor: string;
-  cityStyle: CityStyle;
-}) {
-  const facadeTexture = useMemo(
-    () => cell.isDecorative
-      ? generateDecorativeFacadeTexture(cell.seed, cell.width, cell.height, baseColor, glowColor)
-      : generateWindowTexture(cell.seed, Math.max(cell.width, cell.depth), cell.height),
-    [baseColor, cell.depth, cell.height, cell.isDecorative, cell.seed, cell.width, glowColor],
-  );
-
-  const buildingMaterial = useMemo(() => {
-    return new THREE.MeshStandardMaterial({
-      color: "#ffffff",
-      map: facadeTexture,
-      emissiveMap: facadeTexture,
-      emissive: new THREE.Color(glowColor),
-      emissiveIntensity: cell.isDecorative
-        ? (cityStyle === "cyberpunk" ? 2.15 : 1.5)
-        : (cityStyle === "cyberpunk" ? 2.35 : cityStyle === "tokyo-dense" ? 2.05 : 1.55),
-      roughness: cell.isDecorative ? 0.7 : cityStyle === "cyberpunk" ? 0.42 : cityStyle === "modern-glass" ? 0.28 : 0.72,
-      metalness: cell.isDecorative ? 0.16 : cityStyle === "cyberpunk" ? 0.44 : cityStyle === "modern-glass" ? 0.78 : 0.18,
-    });
-  }, [cell.isDecorative, cityStyle, facadeTexture, glowColor]);
-
-  useEffect(() => {
-    return () => buildingMaterial.dispose();
-  }, [buildingMaterial]);
-
-  useEffect(() => {
-    return () => facadeTexture.dispose();
-  }, [facadeTexture]);
-
-  return (
-    <mesh castShadow receiveShadow material={buildingMaterial}>
-      <boxGeometry args={[cell.width, cell.height, cell.depth]} />
-    </mesh>
-  );
-}
-
 function CityScene({
   state,
   contributions,
@@ -1800,58 +1175,17 @@ function CityScene({
       ))}
 
       {model.cells.map((cell, index) => (
-        <BuildingLot key={`lot-${cell.x}-${cell.z}`} cell={cell} index={index} theme={theme} />
+        <BuildingLot key={`lot-${cell.x}-${cell.z}`} cell={cell} index={index} theme={theme} ParkTree={ParkTree} />
       ))}
 
       {model.roads.map((road, index) => (
-        <group key={`road-${index}`} position={road.position}>
-          <mesh receiveShadow>
-            <boxGeometry args={road.size} />
-            <meshStandardMaterial
-              color={theme.road}
-              emissive={theme.roadGlow}
-              emissiveIntensity={state.cityStyle === "cyberpunk" ? 2.2 : state.cityStyle === "tokyo-dense" ? 2.05 : 0.24}
-              roughness={state.cityStyle === "cyberpunk" ? 0.24 : 0.96}
-              metalness={state.cityStyle === "cyberpunk" ? 0.56 : 0.05}
-            />
-          </mesh>
-          {road.axis !== "junction" ? (
-            <>
-              <mesh position={[0, 0.028, 0]} receiveShadow>
-                <boxGeometry args={[road.axis === "x" ? road.size[0] : road.size[0] * 0.28, 0.012, road.axis === "x" ? road.size[2] * 0.28 : road.size[2]]} />
-                <meshStandardMaterial color="#0b0e14" roughness={1} />
-              </mesh>
-              <RoadGlyphs road={road} theme={theme} />
-            </>
-          ) : (
-            <>
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.036, 0]}>
-                <ringGeometry args={[road.size[0] * 0.08, road.size[0] * 0.18, 18]} />
-                <meshBasicMaterial
-                  color={new THREE.Color(theme.roadGlow).multiplyScalar(2.1)}
-                  transparent
-                  opacity={0.24}
-                  side={THREE.DoubleSide}
-                  toneMapped={false}
-                />
-              </mesh>
-              {Math.abs(road.position[0]) > (model.bounds.width / 2) - 4 &&
-              Math.abs(road.position[2]) > (model.bounds.depth / 2) - 4
-                ? [
-                    [road.size[0] * 0.28, 0, road.size[2] * 0.28],
-                    [-road.size[0] * 0.28, 0, -road.size[2] * 0.28],
-                  ].map((position, lightIndex) => (
-                    <TrafficSignal
-                      key={`signal-${lightIndex}`}
-                      position={position as [number, number, number]}
-                      theme={theme}
-                      phase={lightIndex * 1.6}
-                    />
-                  ))
-                : null}
-            </>
-          )}
-        </group>
+        <ProceduralRoad
+          key={`road-${index}`}
+          road={road}
+          theme={theme}
+          cityStyle={state.cityStyle}
+          bounds={model.bounds}
+        />
       ))}
 
       {model.cars.map((car, index) => (
