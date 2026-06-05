@@ -679,24 +679,24 @@ function patchStateFromProfile(data: GitBentoData): Partial<EditorState> {
   const impact = data.rpg.stats.impact;
   const diversity = data.rpg.stats.diversity;
   const consistency = data.rpg.stats.consistency;
-  const nightSignals = data.rpg.nightSignals;
 
   return {
     citySize: clamp(18 + Math.round(repos / 5), 18, 36),
-    cityDensity: clamp(72 + Math.round(consistency * 0.14), 68, 96),
-    blockSize: 3,
+    cityDensity: clamp(60 + Math.round(consistency * 0.08), 58, 78),
+    blockSize: 5,
     streetPattern: "grid",
-    commercial: clamp(34 + Math.round(impact * 0.16), 30, 58),
-    residential: clamp(22 + Math.round(diversity * 0.12), 20, 42),
-    industrial: clamp(18 + Math.round((100 - consistency) * 0.1), 14, 34),
-    averageHeight: clamp(42 + Math.round(contributions / 24), 42, 92),
-    heightVariance: clamp(24 + Math.round((nightSignals + stars) / 18), 24, 52),
-    cityStyle: "cyberpunk",
-    riverProbability: clamp(24 + Math.round(diversity * 0.24), 18, 78),
+    commercial: clamp(16 + Math.round(impact * 0.06), 14, 28),
+    residential: clamp(22 + Math.round(diversity * 0.08), 20, 34),
+    industrial: clamp(48 + Math.round((100 - consistency) * 0.12), 42, 62),
+    averageHeight: clamp(30 + Math.round(contributions / 48), 30, 54),
+    heightVariance: clamp(14 + Math.round(stars / 32), 14, 28),
+    cityStyle: "brutalist",
+    riverProbability: clamp(10 + Math.round(diversity * 0.08), 8, 24),
     parksPercent: clamp(4 + Math.round((100 - impact) * 0.05), 3, 12),
-    terrainRoughness: clamp(8 + Math.round(diversity * 0.1), 4, 28),
-    terrainStyle: "coastline",
+    terrainRoughness: clamp(24 + Math.round(diversity * 0.08), 18, 42),
+    terrainStyle: "plains",
     viewPreset: "cinematic",
+    preset: "industrial-belt",
   };
 }
 
