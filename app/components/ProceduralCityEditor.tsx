@@ -1,6 +1,6 @@
 "use client";
 import { toPng } from "html-to-image";
-import { Html, OrbitControls, useGLTF } from "@react-three/drei";
+import { Html, MeshReflectorMaterial, OrbitControls, Sphere, Stars, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
@@ -186,23 +186,40 @@ const TREE_MODEL_PATH = "/tree.glb";
 const HAS_CAR_MODEL = false;
 const HAS_TREE_MODEL = false;
 
+const TOKYO_NIGHT = {
+  background: "#0a0514",
+  fog: "#140a2a",
+  ground: "#03050d",
+  road: "#050711",
+  water: "#030712",
+  body: "#070a13",
+  bodyTrim: "#0d1220",
+  neonPurple: "#a855f7",
+  neonMagenta: "#ec4899",
+  neonCyan: "#06b6d4",
+  moon: "#f5f3ff",
+  moonGlow: "#d8b4fe",
+  ambientBlue: "#60a5fa",
+  rimPurple: "#c084fc",
+} as const;
+
 const INITIAL_STATE: EditorState = {
   citySize: 28,
   cityDensity: 66,
   blockSize: 5,
   streetPattern: "grid",
-  commercial: 18,
-  residential: 24,
-  industrial: 58,
-  averageHeight: 44,
-  heightVariance: 24,
-  cityStyle: "brutalist",
-  riverProbability: 18,
-  parksPercent: 6,
-  terrainRoughness: 42,
-  terrainStyle: "plains",
+  commercial: 32,
+  residential: 40,
+  industrial: 28,
+  averageHeight: 52,
+  heightVariance: 34,
+  cityStyle: "tokyo-dense",
+  riverProbability: 58,
+  parksPercent: 4,
+  terrainRoughness: 20,
+  terrainStyle: "coastline",
   viewPreset: "cinematic",
-  preset: "industrial-belt",
+  preset: "balanced-core",
 };
 
 const STYLE_THEMES: Record<CityStyle, StyleTheme> = {
@@ -241,21 +258,21 @@ const STYLE_THEMES: Record<CityStyle, StyleTheme> = {
     accent: "#f3d19b",
   },
   "tokyo-dense": {
-    skyTop: "#04110b",
-    skyBottom: "#0a2a18",
-    fog: "#0c2a18",
-    ground: "#0a1610",
-    road: "#101814",
-    roadGlow: "#5cff7a",
-    water: "#0b2f22",
-    park: "#112817",
-    commercialBase: "#1a241d",
-    commercialGlow: "#f5ffb0",
-    residentialBase: "#152019",
-    residentialGlow: "#8dff72",
-    industrialBase: "#1c1915",
-    industrialGlow: "#ffb45f",
-    accent: "#c9ffd4",
+    skyTop: "#0a0514",
+    skyBottom: "#190a37",
+    fog: "#140a2a",
+    ground: "#050814",
+    road: "#070a12",
+    roadGlow: "#a855f7",
+    water: "#060a15",
+    park: "#0d1a17",
+    commercialBase: "#070b14",
+    commercialGlow: "#ec4899",
+    residentialBase: "#070b14",
+    residentialGlow: "#a855f7",
+    industrialBase: "#070b14",
+    industrialGlow: "#06b6d4",
+    accent: "#c4b5fd",
   },
   cyberpunk: {
     skyTop: "#060812",
@@ -418,12 +435,10 @@ function generateWindowTexture(seed: number, width: number, height: number) {
   const texture = new THREE.CanvasTexture(canvas);
   if (!context) return texture;
 
-  const facadeTones = ["#1a1f28", "#171d26", "#1b222d", "#202733"];
-  const baseTone = facadeTones[Math.floor(seededNoise(seed, 0.5, 0.5) * facadeTones.length)];
   const litChance = clamp(0.42 + seededNoise(seed, 4.2, 1.1) * 0.28, 0.38, 0.72);
-  const windowColors = ["#ffd878", "#c9ecff", "#fff1b8", "#b7d9ff"];
+  const windowColors = ["#ffffff", "#f9f1ff", "#ffeaff", "#e9fbff"];
 
-  context.fillStyle = baseTone;
+  context.fillStyle = "#000000";
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   for (let row = 0; row < rows; row += 1) {
@@ -438,23 +453,17 @@ function generateWindowTexture(seed: number, width: number, height: number) {
       const tintNoise = seededNoise(seed + 91, row + 1, col + 1);
       const isLit = litNoise < litChance && seededNoise(seed + 211, row, col) > 0.16;
 
-      context.fillStyle = seededNoise(seed + 301, row, col) > 0.5 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.12)";
-      context.fillRect(x, y, cellWidth, cellHeight);
-
-      context.fillStyle = isLit
-        ? windowColors[Math.floor(tintNoise * windowColors.length)]
-        : (seededNoise(seed + 401, col, row) > 0.5 ? "#0b1118" : "#121922");
-      context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, windowHeight);
-
       if (isLit) {
-        context.fillStyle = "rgba(255,255,255,0.22)";
+        context.fillStyle = windowColors[Math.floor(tintNoise * windowColors.length)];
+        context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, windowHeight);
+        context.fillStyle = "rgba(255,255,255,0.34)";
         context.fillRect(x + frameInsetX, y + frameInsetY, windowWidth, Math.max(1, Math.floor(windowHeight * 0.18)));
       }
     }
   }
 
   for (let row = 1; row < rows; row += 1) {
-    context.fillStyle = "rgba(255,255,255,0.04)";
+    context.fillStyle = "rgba(255,255,255,0)";
     context.fillRect(0, row * cellHeight, canvas.width, 1);
   }
 
@@ -532,6 +541,18 @@ function zoneColor(theme: StyleTheme, zone: ZoneType) {
   if (zone === "commercial") return [theme.commercialBase, theme.commercialGlow] as const;
   if (zone === "industrial") return [theme.industrialBase, theme.industrialGlow] as const;
   return [theme.residentialBase, theme.residentialGlow] as const;
+}
+
+function languageGlowColor(language: string | null, score: number) {
+  const normalized = language?.toLowerCase() ?? "";
+  if (/(typescript|javascript|tsx|jsx|react|vue|svelte)/.test(normalized)) return TOKYO_NIGHT.neonPurple;
+  if (/(python|ruby|html|css|scss|swift|kotlin)/.test(normalized)) return TOKYO_NIGHT.neonMagenta;
+  if (/(go|rust|java|c|c\+\+|c#|shell|docker|sql)/.test(normalized)) return TOKYO_NIGHT.neonCyan;
+  return score > 0.58 ? TOKYO_NIGHT.neonMagenta : score > 0.32 ? TOKYO_NIGHT.neonPurple : TOKYO_NIGHT.neonCyan;
+}
+
+function activityGlowIntensity(score: number, isDecorative: boolean) {
+  return isDecorative ? 0.72 : THREE.MathUtils.lerp(2, 5, clamp(score, 0, 1));
 }
 
 function pickCarPalette(style: CityStyle, seed: number) {
@@ -682,21 +703,21 @@ function patchStateFromProfile(data: GitBentoData): Partial<EditorState> {
 
   return {
     citySize: clamp(18 + Math.round(repos / 5), 18, 36),
-    cityDensity: clamp(60 + Math.round(consistency * 0.08), 58, 78),
-    blockSize: 5,
+    cityDensity: clamp(68 + Math.round(consistency * 0.08), 64, 86),
+    blockSize: 4,
     streetPattern: "grid",
-    commercial: clamp(16 + Math.round(impact * 0.06), 14, 28),
-    residential: clamp(22 + Math.round(diversity * 0.08), 20, 34),
-    industrial: clamp(48 + Math.round((100 - consistency) * 0.12), 42, 62),
-    averageHeight: clamp(30 + Math.round(contributions / 48), 30, 54),
-    heightVariance: clamp(14 + Math.round(stars / 32), 14, 28),
-    cityStyle: "brutalist",
-    riverProbability: clamp(10 + Math.round(diversity * 0.08), 8, 24),
-    parksPercent: clamp(4 + Math.round((100 - impact) * 0.05), 3, 12),
-    terrainRoughness: clamp(24 + Math.round(diversity * 0.08), 18, 42),
-    terrainStyle: "plains",
+    commercial: clamp(24 + Math.round(impact * 0.08), 22, 40),
+    residential: clamp(32 + Math.round(diversity * 0.08), 28, 44),
+    industrial: clamp(18 + Math.round((100 - consistency) * 0.08), 16, 34),
+    averageHeight: clamp(38 + Math.round(contributions / 42), 38, 72),
+    heightVariance: clamp(22 + Math.round(stars / 28), 22, 44),
+    cityStyle: "tokyo-dense",
+    riverProbability: clamp(42 + Math.round(diversity * 0.12), 36, 84),
+    parksPercent: clamp(3 + Math.round((100 - impact) * 0.03), 2, 8),
+    terrainRoughness: clamp(16 + Math.round(diversity * 0.04), 12, 28),
+    terrainStyle: "coastline",
     viewPreset: "cinematic",
-    preset: "industrial-belt",
+    preset: "balanced-core",
   };
 }
 
@@ -920,7 +941,10 @@ function buildCityModel(state: EditorState, repoSignals: RepoSignal[]) {
     const width = (zone === "commercial" ? 1.8 : zone === "industrial" ? 2.2 : 1.95) * (isAmbientTower ? 0.9 : 1);
     const depth = (zone === "commercial" ? 1.8 : zone === "industrial" ? 2.4 : 2.05) * (isAmbientTower ? 0.9 : 1);
     const varianceNoise = (seededNoise(912, index, slotIndex) - 0.5) * 12 * varianceFactor;
-    const height = clamp((zoneBaseHeight + (activityStrength * 12) + (scoreStrength * 7) + varianceNoise) * averageHeightFactor, 4.6, 34);
+    const prestigeBoost = activityStrength > 0.68 || scoreStrength > 0.74
+      ? THREE.MathUtils.lerp(1.12, 1.32, Math.max(activityStrength, scoreStrength))
+      : 1;
+    const height = clamp((zoneBaseHeight + (activityStrength * 14) + (scoreStrength * 8.5) + varianceNoise) * averageHeightFactor * prestigeBoost, 4.8, 42);
     const avenuePush = Math.abs(cluster.x) < 1 ? (seededNoise(804, index, slotIndex) > 0.5 ? 1 : -1) * 4.8 : 0;
     const worldX = state.streetPattern === "grid"
       ? clamp(
@@ -1141,9 +1165,9 @@ function CameraDirector({
       nextPosition.set(0, cameraSpan * 0.82, 0.01);
       if (perspectiveCamera) perspectiveCamera.fov = 28;
     } else if (viewPreset === "cinematic") {
-      target.current.set(0, cameraSpan * 0.09, -Math.min(bounds.depth * 0.1, 9));
-      nextPosition.set(cameraSpan * 0.18, cameraSpan * 0.15, cameraSpan * 0.34);
-      if (perspectiveCamera) perspectiveCamera.fov = 42;
+      target.current.set(0, cameraSpan * 0.13, -Math.min(bounds.depth * 0.08, 8));
+      nextPosition.set(cameraSpan * 0.14, cameraSpan * 0.14, cameraSpan * 0.25);
+      if (perspectiveCamera) perspectiveCamera.fov = 34;
     } else {
       target.current.set(0, cameraSpan * 0.06, 0);
       nextPosition.set(0, cameraSpan * 0.22, cameraSpan * 0.34);
@@ -1167,28 +1191,240 @@ function CameraDirector({
 }
 
 function Terrain({ bounds, theme }: { bounds: CityModel["bounds"]; theme: StyleTheme }) {
+  const span = Math.max(bounds.width, bounds.depth);
+  const groundRadius = span * 4.8;
+  const plinthRadius = span * 0.66;
+
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.08, 0]} receiveShadow>
-        <planeGeometry args={[bounds.width + 42, bounds.depth + 42]} />
-        <meshStandardMaterial
-          color={theme.ground}
-          emissive={theme.ground}
-          emissiveIntensity={0.08}
-          roughness={0.82}
-          metalness={0.14}
+        <circleGeometry args={[groundRadius, 128]} />
+        <MeshReflectorMaterial
+          color="#01030a"
+          blur={[700, 180]}
+          mixBlur={1}
+          mixStrength={1.35}
+          roughness={0.24}
+          metalness={0.92}
+          mirror={0.62}
+          resolution={1024}
+          depthScale={0.34}
+          minDepthThreshold={0.88}
+          maxDepthThreshold={1.32}
         />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.045, 0]}>
-        <planeGeometry args={[bounds.width + 30, bounds.depth + 30]} />
+
+      <mesh position={[0, -0.48, 0]} scale={[1.18, 1, 0.72]} receiveShadow>
+        <cylinderGeometry args={[plinthRadius, plinthRadius * 1.06, 0.78, 96]} />
         <meshStandardMaterial
-          color="#0a1220"
-          emissive="#14233f"
-          emissiveIntensity={0.08}
+          color="#030511"
+          emissive={theme.roadGlow}
+          emissiveIntensity={0.018}
+          roughness={0.34}
+          metalness={0.72}
+        />
+      </mesh>
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.035, 0]}>
+        <ringGeometry args={[plinthRadius * 0.64, plinthRadius * 0.67, 128]} />
+        <meshBasicMaterial
+          color={new THREE.Color(theme.roadGlow).multiplyScalar(1.4)}
           transparent
-          opacity={0.18}
-          roughness={0.16}
-          metalness={0.84}
+          opacity={0.08}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function TokyoStarField({ bounds, theme }: { bounds: CityModel["bounds"]; theme: StyleTheme }) {
+  const span = Math.max(bounds.width, bounds.depth);
+  const starTexture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext("2d");
+    const texture = new THREE.CanvasTexture(canvas);
+    if (!context) return texture;
+
+    const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 31);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.28, "rgba(255,245,255,0.82)");
+    gradient.addColorStop(0.62, "rgba(190,150,255,0.2)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  }, []);
+
+  const softStars = useMemo(() => {
+    const count = 760;
+    const positions = new Float32Array(count * 3);
+
+    for (let index = 0; index < count; index += 1) {
+      const i = index * 3;
+      positions[i] = (seededNoise(441, index, 1) - 0.5) * span * 5.2;
+      positions[i + 1] = 26 + seededNoise(442, index, 2) * 56;
+      positions[i + 2] = -bounds.depth * 0.75 - seededNoise(443, index, 3) * span * 2.6;
+    }
+
+    return positions;
+  }, [bounds.depth, span]);
+
+  const brightStars = useMemo(() => {
+    const count = 96;
+    const positions = new Float32Array(count * 3);
+
+    for (let index = 0; index < count; index += 1) {
+      const i = index * 3;
+      positions[i] = (seededNoise(551, index, 1) - 0.5) * span * 4.4;
+      positions[i + 1] = 32 + seededNoise(552, index, 2) * 46;
+      positions[i + 2] = -bounds.depth * 0.86 - seededNoise(553, index, 3) * span * 2.1;
+    }
+
+    return positions;
+  }, [bounds.depth, span]);
+
+  const accentStars = useMemo(() => {
+    const count = 38;
+    const positions = new Float32Array(count * 3);
+
+    for (let index = 0; index < count; index += 1) {
+      const i = index * 3;
+      positions[i] = (seededNoise(661, index, 1) - 0.5) * span * 4.2;
+      positions[i + 1] = 30 + seededNoise(662, index, 2) * 48;
+      positions[i + 2] = -bounds.depth * 0.82 - seededNoise(663, index, 3) * span * 2.1;
+    }
+
+    return positions;
+  }, [bounds.depth, span]);
+
+  useEffect(() => {
+    return () => starTexture.dispose();
+  }, [starTexture]);
+
+  return (
+    <group>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[softStars, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          color="#f7e8ff"
+          map={starTexture}
+          alphaTest={0.02}
+          size={1.9}
+          sizeAttenuation={false}
+          transparent
+          opacity={0.64}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[brightStars, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          color="#ffffff"
+          map={starTexture}
+          alphaTest={0.02}
+          size={2.45}
+          sizeAttenuation={false}
+          transparent
+          opacity={0.82}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[accentStars, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          color={theme.roadGlow}
+          map={starTexture}
+          alphaTest={0.02}
+          size={2.15}
+          sizeAttenuation={false}
+          transparent
+          opacity={0.54}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+    </group>
+  );
+}
+
+function DistantSkyline({ bounds, theme }: { bounds: CityModel["bounds"]; theme: StyleTheme }) {
+  const span = Math.max(bounds.width, bounds.depth);
+  const towers = useMemo(() => (
+    Array.from({ length: 58 }, (_, index) => {
+      const band = index % 2;
+      const x = -span * 1.42 + (index / 57) * span * 2.84 + (seededNoise(781, index, 1) - 0.5) * 2.4;
+      const height = 1.8 + seededNoise(782, index, 2) * (band === 0 ? 7.5 : 4.8);
+      const width = 0.8 + seededNoise(783, index, 3) * 1.5;
+      const depth = 0.55 + seededNoise(784, index, 4) * 0.8;
+      const z = -bounds.depth * 0.72 - band * 4.8 - seededNoise(785, index, 5) * 4.2;
+      const glow = seededNoise(786, index, 6) > 0.58 ? TOKYO_NIGHT.neonCyan : theme.roadGlow;
+
+      return { x, z, width, depth, height, glow, seed: index };
+    })
+  ), [bounds.depth, span, theme.roadGlow]);
+
+  return (
+    <group>
+      {towers.map((tower) => (
+        <group key={`distant-${tower.seed}`} position={[tower.x, tower.height / 2 - 0.04, tower.z]}>
+          <mesh>
+            <boxGeometry args={[tower.width, tower.height, tower.depth]} />
+            <meshStandardMaterial
+              color="#050713"
+              emissive="#100724"
+              emissiveIntensity={0.12}
+              roughness={0.38}
+              metalness={0.68}
+            />
+          </mesh>
+          {Array.from({ length: clamp(Math.round(tower.height / 2), 1, 4) }, (_, row) => (
+            <mesh
+              key={`distant-window-${row}`}
+              position={[
+                (seededNoise(791, tower.seed, row) - 0.5) * tower.width * 0.3,
+                -tower.height * 0.34 + row * Math.max(0.55, tower.height * 0.16),
+                (tower.depth / 2) + 0.012,
+              ]}
+            >
+              <boxGeometry args={[tower.width * 0.42, 0.07, 0.025]} />
+              <meshBasicMaterial
+                color={tower.glow}
+                transparent
+                opacity={0.42}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
+          {seededNoise(792, tower.seed, 1) > 0.68 ? (
+            <mesh position={[0, tower.height / 2 + 0.28, 0]}>
+              <cylinderGeometry args={[0.012, 0.018, 0.58, 5]} />
+              <meshBasicMaterial color={tower.glow} transparent opacity={0.48} toneMapped={false} />
+            </mesh>
+          ) : null}
+        </group>
+      ))}
+      <mesh position={[0, 1.15, -bounds.depth * 0.84]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[span * 3.25, span * 0.34]} />
+        <meshBasicMaterial
+          color="#140828"
+          transparent
+          opacity={0.2}
+          side={THREE.DoubleSide}
+          toneMapped={false}
         />
       </mesh>
     </group>
@@ -1554,11 +1790,11 @@ function BuildingLot({
   const isDecorative = cell.isDecorative;
   const isResidential = cell.zone === "residential";
   const lotColor = isDecorative
-    ? "#6d727b"
-    : isResidential ? "#142018" : cell.zone === "industrial" ? "#17191c" : "#151b22";
-  const stripColor = isDecorative ? "#69a85f" : isResidential ? "#4f9f46" : "#5fae54";
-  const curbColor = isDecorative ? "#d4b6cf" : index % 2 === 0 ? theme.roadGlow : "#ff73e8";
-  const sidewalkColor = isDecorative ? "#b6b3b8" : "#303846";
+    ? "#0b1018"
+    : isResidential ? "#06120f" : cell.zone === "industrial" ? "#090b12" : "#080c15";
+  const stripColor = isDecorative ? "#111827" : isResidential ? "#092018" : "#0c1724";
+  const curbColor = isDecorative ? theme.accent : index % 2 === 0 ? theme.roadGlow : TOKYO_NIGHT.neonMagenta;
+  const sidewalkColor = isDecorative ? "#111827" : "#0d1320";
 
   return (
     <group position={[cell.worldX, 0.005, cell.worldZ]}>
@@ -1588,7 +1824,7 @@ function BuildingLot({
           <group position={[0, 0.038, -lotDepth * 0.34]}>
             <mesh receiveShadow>
               <boxGeometry args={[lotWidth * 0.88, 0.045, 0.28]} />
-              <meshStandardMaterial color="#8a8f97" roughness={0.94} metalness={0.02} />
+              <meshStandardMaterial color="#111827" roughness={0.62} metalness={0.46} />
             </mesh>
           </group>
         </>
@@ -1638,11 +1874,11 @@ function BuildingLot({
         <mesh key={`curb-${curbIndex}`} position={[x, 0.055, z]}>
           <boxGeometry args={[width, 0.05, depth]} />
           <meshStandardMaterial
-            color={isDecorative ? sidewalkColor : "#303846"}
+            color={isDecorative ? sidewalkColor : "#0d1320"}
             emissive={curbColor}
             emissiveIntensity={isDecorative ? 0.04 : curbIndex < 2 ? 0.12 : 0.06}
-            roughness={0.34}
-            metalness={0.38}
+            roughness={0.24}
+            metalness={0.7}
           />
         </mesh>
       ))}
@@ -1689,12 +1925,10 @@ function BuildingShell({
   cell,
   baseColor,
   glowColor,
-  cityStyle,
 }: {
   cell: Cell;
   baseColor: string;
   glowColor: string;
-  cityStyle: CityStyle;
 }) {
   const facadeTexture = useMemo(
     () => cell.isDecorative
@@ -1703,19 +1937,47 @@ function BuildingShell({
     [baseColor, cell.depth, cell.height, cell.isDecorative, cell.seed, cell.width, glowColor],
   );
 
+  const emissiveColor = useMemo(
+    () => new THREE.Color(cell.isDecorative ? glowColor : languageGlowColor(cell.repo.language, cell.activityScore)),
+    [cell.activityScore, cell.isDecorative, cell.repo.language, glowColor],
+  );
+
+  const emissiveIntensity = useMemo(
+    () => activityGlowIntensity(cell.activityScore, cell.isDecorative),
+    [cell.activityScore, cell.isDecorative],
+  );
+  const isPrestigeTower = !cell.isDecorative && (cell.activityScore > 0.62 || cell.contributionCount > 8);
+  const silhouette = useMemo(() => {
+    const variant = Math.floor(seededNoise(cell.seed, 2.7, 8.9) * 4);
+    const lowerHeight = cell.height * (variant === 0 ? 0.62 : variant === 1 ? 0.54 : 0.5);
+    const middleHeight = cell.height * (variant === 2 ? 0.34 : 0.28);
+    const crownHeight = Math.max(0.32, cell.height - lowerHeight - middleHeight);
+    const topScale = variant === 3 ? 0.54 : variant === 1 ? 0.66 : 0.76;
+    const middleScale = variant === 0 ? 0.88 : 0.78;
+
+    return {
+      variant,
+      lowerHeight,
+      middleHeight,
+      crownHeight,
+      middleScale,
+      topScale,
+      sideFinHeight: cell.height * (0.46 + seededNoise(cell.seed, 11, 2) * 0.22),
+    };
+  }, [cell.height, cell.seed]);
+
   const buildingMaterial = useMemo(() => {
     return new THREE.MeshStandardMaterial({
-      color: "#ffffff",
-      map: facadeTexture,
+      color: "#02030a",
       emissiveMap: facadeTexture,
-      emissive: new THREE.Color(glowColor),
-      emissiveIntensity: cell.isDecorative
-        ? (cityStyle === "cyberpunk" ? 2.15 : 1.5)
-        : (cityStyle === "cyberpunk" ? 2.35 : cityStyle === "tokyo-dense" ? 2.05 : 1.55),
-      roughness: cell.isDecorative ? 0.7 : cityStyle === "cyberpunk" ? 0.42 : cityStyle === "modern-glass" ? 0.28 : 0.72,
-      metalness: cell.isDecorative ? 0.16 : cityStyle === "cyberpunk" ? 0.44 : cityStyle === "modern-glass" ? 0.78 : 0.18,
+      emissive: emissiveColor,
+      emissiveIntensity,
+      roughness: 0.32,
+      metalness: 0.86,
+      envMapIntensity: 0.55,
+      toneMapped: false,
     });
-  }, [cell.isDecorative, cityStyle, facadeTexture, glowColor]);
+  }, [emissiveColor, emissiveIntensity, facadeTexture]);
 
   useEffect(() => {
     return () => buildingMaterial.dispose();
@@ -1726,9 +1988,149 @@ function BuildingShell({
   }, [facadeTexture]);
 
   return (
-    <mesh castShadow receiveShadow material={buildingMaterial}>
-      <boxGeometry args={[cell.width, cell.height, cell.depth]} />
-    </mesh>
+    <group>
+      {cell.isDecorative ? (
+        <mesh castShadow receiveShadow material={buildingMaterial}>
+          <boxGeometry args={[cell.width, cell.height, cell.depth]} />
+        </mesh>
+      ) : (
+        <>
+          <mesh
+            castShadow
+            receiveShadow
+            material={buildingMaterial}
+            position={[0, (-cell.height / 2) + (silhouette.lowerHeight / 2), 0]}
+          >
+            <boxGeometry args={[cell.width, silhouette.lowerHeight, cell.depth]} />
+          </mesh>
+          <mesh
+            castShadow
+            receiveShadow
+            material={buildingMaterial}
+            position={[
+              cell.width * (silhouette.variant === 1 ? 0.08 : silhouette.variant === 2 ? -0.06 : 0),
+              (-cell.height / 2) + silhouette.lowerHeight + (silhouette.middleHeight / 2),
+              cell.depth * (silhouette.variant === 3 ? 0.08 : 0),
+            ]}
+          >
+            <boxGeometry args={[cell.width * silhouette.middleScale, silhouette.middleHeight, cell.depth * (silhouette.middleScale + 0.04)]} />
+          </mesh>
+          <mesh
+            castShadow
+            receiveShadow
+            material={buildingMaterial}
+            position={[
+              cell.width * (silhouette.variant === 1 ? -0.05 : 0.04),
+              (cell.height / 2) - (silhouette.crownHeight / 2),
+              cell.depth * (silhouette.variant === 2 ? -0.07 : 0.02),
+            ]}
+          >
+            <boxGeometry args={[cell.width * silhouette.topScale, silhouette.crownHeight, cell.depth * Math.max(0.5, silhouette.topScale - 0.02)]} />
+          </mesh>
+
+          {[1, -1].map((side) => (
+            <mesh
+              key={`fin-x-${side}`}
+              position={[
+                side * cell.width * 0.56,
+                (-cell.height / 2) + (silhouette.sideFinHeight / 2) + cell.height * 0.08,
+                cell.depth * 0.02,
+              ]}
+              castShadow
+            >
+              <boxGeometry args={[0.08, silhouette.sideFinHeight, cell.depth * 0.74]} />
+              <meshStandardMaterial
+                color={TOKYO_NIGHT.bodyTrim}
+                emissive="#02030a"
+                emissiveIntensity={0.08}
+                metalness={0.94}
+                roughness={0.14}
+              />
+            </mesh>
+          ))}
+
+          {[
+            [-(cell.width / 2) - 0.015, 0, (cell.depth / 2) + 0.018, 0.034, cell.height * 0.92, 0.034],
+            [(cell.width / 2) + 0.015, 0, (cell.depth / 2) + 0.018, 0.034, cell.height * 0.92, 0.034],
+            [0, (cell.height / 2) - 0.035, (cell.depth / 2) + 0.02, cell.width * 0.86, 0.045, 0.035],
+            [0, (-cell.height / 2) + 0.2, (cell.depth / 2) + 0.02, cell.width * 0.92, 0.045, 0.035],
+            [-(cell.width / 2) - 0.012, 0, -(cell.depth / 2) - 0.012, 0.025, cell.height * 0.72, 0.025],
+            [(cell.width / 2) + 0.012, 0, -(cell.depth / 2) - 0.012, 0.025, cell.height * 0.72, 0.025],
+          ].map(([x, y, z, width, height, depth], edgeIndex) => (
+            <mesh key={`edge-${edgeIndex}`} position={[x, y, z]}>
+              <boxGeometry args={[width, height, depth]} />
+              <meshBasicMaterial
+                color={emissiveColor}
+                transparent
+                opacity={edgeIndex < 4 ? (isPrestigeTower ? 0.74 : 0.48) : 0.24}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
+
+          {[0.22, 0.52, 0.78].map((heightRatio, beltIndex) => (
+            <mesh
+              key={`neon-belt-${beltIndex}`}
+              position={[0, (-cell.height / 2) + (cell.height * heightRatio), (cell.depth / 2) + 0.012]}
+            >
+              <boxGeometry args={[cell.width * (0.46 + beltIndex * 0.1), 0.032, 0.028]} />
+              <meshBasicMaterial color={emissiveColor} transparent opacity={0.62} toneMapped={false} />
+            </mesh>
+          ))}
+
+          <mesh position={[0, cell.height / 2 + 0.04, 0]} castShadow>
+            <boxGeometry args={[cell.width * 0.76, 0.08, cell.depth * 0.76]} />
+            <meshStandardMaterial
+              color="#03040c"
+              emissive="#050615"
+              emissiveIntensity={0.12}
+              metalness={0.92}
+              roughness={0.16}
+            />
+          </mesh>
+          <mesh position={[0, cell.height / 2 + 0.1, (cell.depth * 0.38)]}>
+            <boxGeometry args={[cell.width * 0.62, 0.035, 0.04]} />
+            <meshBasicMaterial color={emissiveColor} transparent opacity={0.72} toneMapped={false} />
+          </mesh>
+
+          {cell.tower || silhouette.variant > 1 ? (
+            <mesh position={[cell.width * 0.18, cell.height / 2 + 0.5, cell.depth * -0.12]}>
+              <cylinderGeometry args={[0.025, 0.04, 0.96, 6]} />
+              <meshStandardMaterial
+                color={TOKYO_NIGHT.bodyTrim}
+                emissive={emissiveColor}
+                emissiveIntensity={Math.max(1.6, emissiveIntensity * 0.55)}
+                metalness={0.9}
+                roughness={0.18}
+                toneMapped={false}
+              />
+            </mesh>
+          ) : null}
+          {isPrestigeTower ? (
+            <group position={[0, cell.height / 2 + 0.46, 0]}>
+              <mesh>
+                <boxGeometry args={[cell.width * 0.48, 0.11, cell.depth * 0.48]} />
+                <meshStandardMaterial
+                  color="#03040b"
+                  emissive="#050615"
+                  emissiveIntensity={0.1}
+                  roughness={0.14}
+                  metalness={0.94}
+                />
+              </mesh>
+              <mesh position={[0, 0.08, cell.depth * 0.26]}>
+                <boxGeometry args={[cell.width * 0.44, 0.035, 0.035]} />
+                <meshBasicMaterial color={emissiveColor} transparent opacity={0.86} toneMapped={false} />
+              </mesh>
+              <mesh position={[0, 0.62, -cell.depth * 0.04]}>
+                <cylinderGeometry args={[0.018, 0.032, 1.04, 6]} />
+                <meshBasicMaterial color={emissiveColor} transparent opacity={0.8} toneMapped={false} />
+              </mesh>
+            </group>
+          ) : null}
+        </>
+      )}
+    </group>
   );
 }
 
@@ -1746,14 +2148,19 @@ function CityScene({
 
   return (
     <>
-      <color attach="background" args={[theme.skyTop]} />
-      <fog attach="fog" args={[theme.fog, 24, 190]} />
+      <color attach="background" args={[TOKYO_NIGHT.background]} />
+      <fog attach="fog" args={[TOKYO_NIGHT.fog, 28, 170]} />
 
       <CameraDirector viewPreset={state.viewPreset} bounds={model.bounds} controlsRef={controlsRef} />
 
-      <ambientLight intensity={0.48} color={theme.accent} />
-      <directionalLight position={[28, 42, 18]} intensity={0.72} color="#d8dde6" castShadow />
-      <pointLight position={[0, 12, 0]} intensity={0.5} color={theme.roadGlow} />
+      <Stars radius={190} depth={100} count={1400} factor={2.2} saturation={0.18} fade speed={0.12} />
+      <TokyoStarField bounds={model.bounds} theme={theme} />
+      <ambientLight intensity={0.08} color={TOKYO_NIGHT.ambientBlue} />
+      <directionalLight position={[22, 28, 12]} intensity={0.24} color={TOKYO_NIGHT.rimPurple} castShadow />
+      <Sphere args={[1.45, 48, 48]} position={[model.bounds.width * 0.34, 24, -model.bounds.depth * 0.48]}>
+        <meshStandardMaterial color={TOKYO_NIGHT.moon} emissive={TOKYO_NIGHT.moonGlow} emissiveIntensity={2.8} toneMapped={false} />
+      </Sphere>
+      <DistantSkyline bounds={model.bounds} theme={theme} />
 
       <Terrain bounds={model.bounds} theme={theme} />
 
@@ -1769,16 +2176,25 @@ function CityScene({
       ))}
 
       {model.water.map((strip, index) => (
-        <mesh key={`water-${index}`} position={strip.position} receiveShadow>
-          <boxGeometry args={strip.size} />
-          <meshStandardMaterial
-            color={theme.water}
-            emissive={theme.water}
-            emissiveIntensity={state.cityStyle === "cyberpunk" ? 0.34 : 0.12}
-            transparent
-            opacity={0.92}
-            roughness={0.26}
-            metalness={0.42}
+        <mesh
+          key={`water-${index}`}
+          position={[strip.position[0], strip.position[1] + 0.03, strip.position[2]]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          receiveShadow
+        >
+          <planeGeometry args={[strip.size[0], strip.size[2]]} />
+          <MeshReflectorMaterial
+            color={TOKYO_NIGHT.water}
+            blur={[500, 100]}
+            mixBlur={1}
+            mixStrength={1.5}
+            roughness={0.2}
+            metalness={0.86}
+            mirror={0.88}
+            resolution={1024}
+            depthScale={0.45}
+            minDepthThreshold={0.82}
+            maxDepthThreshold={1.2}
           />
         </mesh>
       ))}
@@ -1805,21 +2221,27 @@ function CityScene({
 
       {model.roads.map((road, index) => (
         <group key={`road-${index}`} position={road.position}>
-          <mesh receiveShadow>
-            <boxGeometry args={road.size} />
-            <meshStandardMaterial
-              color={theme.road}
-              emissive={theme.roadGlow}
-              emissiveIntensity={state.cityStyle === "cyberpunk" ? 2.2 : state.cityStyle === "tokyo-dense" ? 2.05 : 0.24}
-              roughness={state.cityStyle === "cyberpunk" ? 0.24 : 0.96}
-              metalness={state.cityStyle === "cyberpunk" ? 0.56 : 0.05}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]} receiveShadow>
+            <planeGeometry args={[road.size[0], road.size[2]]} />
+            <MeshReflectorMaterial
+              color={TOKYO_NIGHT.road}
+              blur={[500, 100]}
+              mixBlur={1}
+              mixStrength={1.5}
+              roughness={0.2}
+              metalness={0.92}
+              mirror={0.5}
+              resolution={1024}
+              depthScale={0.35}
+              minDepthThreshold={0.8}
+              maxDepthThreshold={1.2}
             />
           </mesh>
           {road.axis !== "junction" ? (
             <>
               <mesh position={[0, 0.028, 0]} receiveShadow>
                 <boxGeometry args={[road.axis === "x" ? road.size[0] : road.size[0] * 0.28, 0.012, road.axis === "x" ? road.size[2] * 0.28 : road.size[2]]} />
-                <meshStandardMaterial color="#0b0e14" roughness={1} />
+                <meshStandardMaterial color="#04060c" roughness={0.28} metalness={0.82} />
               </mesh>
               <RoadGlyphs road={road} theme={theme} />
             </>
@@ -1878,31 +2300,36 @@ function CityScene({
               cell={cell}
               baseColor={baseColor}
               glowColor={glowColor}
-              cityStyle={state.cityStyle}
             />
             <mesh position={[0, -cell.height / 2 + 0.28, 0]} castShadow receiveShadow>
               <boxGeometry args={[cell.width * 1.08, 0.56, cell.depth * 1.08]} />
               <meshStandardMaterial
-                color="#2e333c"
-                emissive="#1a1f28"
-                emissiveIntensity={0.05}
-                roughness={0.76}
-                metalness={0.16}
+                color="#080c14"
+                emissive="#070a12"
+                emissiveIntensity={0.04}
+                roughness={0.24}
+                metalness={0.78}
               />
             </mesh>
             <mesh position={[0, cell.height / 2 - 0.08, 0]} castShadow>
               <boxGeometry args={[cell.width * 1.02, 0.12, cell.depth * 1.02]} />
-              <meshStandardMaterial color="#4a505a" roughness={0.64} metalness={0.28} />
+              <meshStandardMaterial
+                color="#03040b"
+                emissive="#050615"
+                emissiveIntensity={0.08}
+                roughness={0.18}
+                metalness={0.88}
+              />
             </mesh>
             {cell.tower ? (
               <mesh position={[0, cell.height / 2 + 0.34, 0]} castShadow>
                 <boxGeometry args={[cell.width * 0.72, 0.52, cell.depth * 0.72]} />
                 <meshStandardMaterial
-                  color="#39414d"
-                  emissive="#20252f"
-                  emissiveIntensity={0.04}
-                  roughness={0.6}
-                  metalness={0.22}
+                  color="#03040b"
+                  emissive="#050615"
+                  emissiveIntensity={0.08}
+                  roughness={0.18}
+                  metalness={0.9}
                 />
               </mesh>
             ) : null}
@@ -1922,7 +2349,7 @@ function CityScene({
         maxPolarAngle={Math.PI / 2.02}
       />
       <EffectComposer enableNormalPass={false} multisampling={0}>
-        <Bloom mipmapBlur luminanceThreshold={1} intensity={1.5} />
+        <Bloom luminanceThreshold={1} mipmapBlur intensity={1.5} />
       </EffectComposer>
     </>
   );
@@ -2315,28 +2742,6 @@ export function ProceduralCityEditor({
           </div>
         </motion.nav>
         ) : null}
-
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.06 }}
-          className={embedded
-            ? "pointer-events-auto absolute left-6 top-6 z-10 w-[320px] rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"
-            : "pointer-events-auto absolute left-10 top-28 z-10 w-[340px] rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(6,10,14,0.84),rgba(6,10,14,0.52))] p-5 backdrop-blur-2xl"}
-        >
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200/68">Live Profile City</p>
-          <h2 className="mt-3 text-4xl font-black leading-none text-white">
-            {profile?.name ?? "Generate your skyline"}
-          </h2>
-          <p className="mt-3 text-sm leading-6 text-white/58">
-            Profile activity drives density, skyline rhythm, terrain mood, and district balance. Export a poster or record a looping share clip with your stats.
-          </p>
-          {error ? (
-            <p className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              {error}
-            </p>
-          ) : null}
-        </motion.div>
 
         <div
           ref={filterRef}
