@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GitBento",
-  description: "Create draggable GitHub profile bento grids.",
+  title: "GitCraft — Beautiful Developer Assets",
+  description: "Create beautiful, shareable assets from your GitHub profile.",
 };
 
 export default function RootLayout({
