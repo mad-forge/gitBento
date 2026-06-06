@@ -1,17 +1,22 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   ArrowRight,
   Box,
+  Building2,
   Check,
   ChevronDown,
   Code2,
   Download,
+  Grid3x3,
   Image,
+  Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Sun,
+  Terminal,
 } from "lucide-react";
 
 const popularUsers = ["torvalds", "sindresorhus", "gaearon", "addyosmani"];
@@ -22,15 +27,53 @@ const contributionLevels = [
   0, 0, 1, 2, 3, 2, 1, 0, 0, 0, 1, 1, 2, 1, 0, 0, 0, 0, 0, 1, 1, 0,
 ];
 
+const themes = [
+  { name: "Tokyo Night", className: "tokyo", active: true },
+  { name: "Nord", className: "nord" },
+  { name: "Catppuccin", className: "catppuccin" },
+  { name: "Dracula", className: "dracula" },
+  { name: "Synthwave", className: "synthwave" },
+];
+
+const recentUsers = ["@torvalds", "@sindresorhus", "@gaearon", "@addyosmani", "@octocat"];
+
+type AuthUser = {
+  login: string;
+  name: string | null;
+  avatarUrl: string;
+};
+
 export function GitCraftHero() {
   const [username, setUsername] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((response) => response.json())
+      .then((payload: { user: AuthUser | null }) => setAuthUser(payload.user))
+      .catch(() => setAuthUser(null));
+
+    const url = new URL(window.location.href);
+    const error = url.searchParams.get("auth_error");
+    if (error) {
+      setAuthError(error);
+      url.searchParams.delete("auth_error");
+      window.history.replaceState({}, "", url);
+    }
+  }, []);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!username.trim()) return;
     setSubmitted(true);
     window.setTimeout(() => setSubmitted(false), 1600);
+  }
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthUser(null);
   }
 
   return (
@@ -56,22 +99,32 @@ export function GitCraftHero() {
           <button className="theme-button" type="button" aria-label="Toggle theme">
             <Sun size={17} />
           </button>
-          <button className="github-login" type="button">
-            <GithubMark size={18} />
-            <span>Login with GitHub</span>
-          </button>
+          {authUser ? (
+            <div className="github-user">
+              <img src={authUser.avatarUrl} alt="" />
+              <span>@{authUser.login}</span>
+              <button type="button" onClick={handleLogout}>Log out</button>
+            </div>
+          ) : (
+            <a className="github-login" href="/api/auth/github">
+              <GithubMark size={18} />
+              <span>Continue with GitHub</span>
+            </a>
+          )}
         </div>
       </header>
+      {authError ? <button className="auth-notice" type="button" onClick={() => setAuthError("")}>{authError}</button> : null}
 
-      <section className="hero-shell">
-        <div className="hero-copy">
+      <section className="hero-section">
+        <div className="hero-shell site-container">
+          <div className="hero-copy">
           <div className="eyebrow">
             <Sparkles size={14} />
             <span>Turn your GitHub into stunning assets</span>
           </div>
 
           <h1>
-            Build Beautiful<br /><span>Developer Assets</span><br />
+            Build <span>Beautiful<br />Developer Assets</span><br />
             From GitHub Profiles
           </h1>
 
@@ -117,24 +170,220 @@ export function GitCraftHero() {
             <Feature icon={<ShieldCheck size={20} />} title="No Signup" detail="100% Free" />
             <Feature icon={<Code2 size={20} />} title="Open Source" detail="Built with love" />
           </div>
-        </div>
+          </div>
 
-        <div className="preview-scene" aria-label="GitCraft asset previews">
-          <div className="ghost-panel ghost-panel-two" />
-          <div className="ghost-panel ghost-panel-one" />
-          <div className="preview-panel">
-            <PreviewHeader label="GITCITY" />
-            <CityCard />
+          <div className="preview-scene" aria-label="GitCraft asset previews">
+            <div className="ghost-panel ghost-panel-two" />
+            <div className="ghost-panel ghost-panel-one" />
+            <div className="preview-panel">
+              <PreviewHeader label="GITCITY" />
+              <CityCard />
 
-            <PreviewHeader label="BENTO CARD" />
-            <ProfileCard />
+              <PreviewHeader label="BENTO CARD" />
+              <ProfileCard />
 
-            <PreviewHeader label="TERMINAL" />
-            <TerminalCard />
+              <PreviewHeader label="TERMINAL" />
+              <TerminalCard />
+            </div>
           </div>
         </div>
       </section>
+
+      <div className="landing-content">
+        <section className="landing-section creation-section" id="explore">
+          <div className="section-container site-container">
+          <SectionHeading
+            eyebrow="Create your way"
+            title="Choose What You Want to Create"
+            description="Pick a style, generate and download in PNG."
+          />
+          <div className="creation-grid">
+            <CreationCard title="GitCity" detail="Your contributions, reimagined as a living skyline." icon={<Building2 />} tone="green">
+              <MiniCity variant="night" />
+              <AssetStats />
+            </CreationCard>
+            <CreationCard title="Terminal Card" detail="A polished developer snapshot made for READMEs." icon={<Terminal />} tone="blue">
+              <MiniTerminal />
+            </CreationCard>
+            <CreationCard title="Bento Card" detail="Profile, stats, and activity in one clean layout." icon={<Grid3x3 />} tone="purple">
+              <MiniBento />
+            </CreationCard>
+            <CreationCard title="Contribution Art" detail="Turn commit patterns into atmospheric artwork." icon={<Image />} tone="orange">
+              <ContributionArt />
+            </CreationCard>
+          </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="themes">
+          <div className="section-container site-container">
+          <SectionHeading
+            eyebrow="Make it yours"
+            title="Beautiful Themes"
+            description="Choose a theme that matches your vibe."
+          />
+          <div className="theme-row">
+            {themes.map((theme) => (
+              <button className={`theme-card ${theme.className} ${theme.active ? "active" : ""}`} key={theme.name} type="button">
+                <span className="theme-sky">
+                  <i /><i /><i /><i /><i /><i />
+                </span>
+                <strong>{theme.name}</strong>
+                <small>Skyline preset</small>
+                {theme.active ? <b><Check size={11} /></b> : null}
+              </button>
+            ))}
+          </div>
+          </div>
+        </section>
+
+        <section className="landing-section works-section">
+          <div className="section-container site-container">
+          <SectionHeading
+            eyebrow="Simple by design"
+            title="How It Works"
+            description="Create your developer assets in 3 simple steps."
+          />
+          <div className="steps-row">
+            <StepCard number="1" title="Search Username" detail="Enter any GitHub handle to fetch profile data." icon={<Search />} />
+            <span className="step-connector"><ArrowRight size={14} /></span>
+            <StepCard number="2" title="Customize" detail="Set styles, colors, and preview your asset." icon={<SlidersHorizontal />} />
+            <span className="step-connector"><ArrowRight size={14} /></span>
+            <StepCard number="3" title="Export PNG" detail="Download high-quality assets ready to share." icon={<Download />} />
+          </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="gallery">
+          <div className="section-container site-container">
+          <div className="section-heading gallery-heading">
+            <div>
+              <span>Made with GitCraft</span>
+              <h2>Recently Generated</h2>
+            </div>
+            <div className="gallery-actions">
+              <p>See what others are creating.</p>
+              <a href="#explore">View all <ArrowRight size={15} /></a>
+            </div>
+          </div>
+          <div className="recent-grid">
+            {recentUsers.map((user, index) => (
+              <article className={`recent-card recent-${index + 1}`} key={user}>
+                <div className="recent-art">
+                  {index === 1 || index === 3 ? <MiniBento compact /> : <MiniCity variant={index === 2 ? "sunset" : "night"} />}
+                </div>
+                <div className="recent-meta">
+                  <span className="recent-avatar"><GithubMark size={14} /></span>
+                  <span><strong>{user}</strong><small>Total Contributions · {(2843 + index * 719).toLocaleString()}</small></span>
+                </div>
+              </article>
+            ))}
+          </div>
+          </div>
+        </section>
+
+        <section className="cta-section">
+          <div className="site-container">
+            <div className="cta-banner">
+              <div>
+                <span className="cta-kicker"><Sparkles size={14} /> Your profile deserves better</span>
+                <h2>Ready to build your<br /><em>developer identity?</em></h2>
+              </div>
+              <p>Create polished GitHub assets in seconds. No design tools, no signup, no friction.</p>
+              <button type="button">Generate My Assets <ArrowRight size={17} /></button>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
+  );
+}
+
+function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return (
+    <div className="section-heading">
+      <div>
+        <span>{eyebrow}</span>
+        <h2>{title}</h2>
+      </div>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function CreationCard({ title, detail, icon, tone, children }: { title: string; detail: string; icon: React.ReactNode; tone: string; children: React.ReactNode }) {
+  return (
+    <article className={`creation-card tone-${tone}`}>
+      <div className="creation-card-top">
+        <span>{icon}</span>
+        <div><h3>{title}</h3><p>{detail}</p></div>
+      </div>
+      <div className="creation-visual">{children}</div>
+      <DownloadButton />
+    </article>
+  );
+}
+
+function AssetStats() {
+  return (
+    <div className="asset-stats">
+      <span><small>Repos</small><strong>457</strong></span>
+      <span><small>Followers</small><strong>12.4k</strong></span>
+      <span><small>Contributions</small><strong>2,843</strong></span>
+    </div>
+  );
+}
+
+function MiniCity({ variant }: { variant: "night" | "sunset" }) {
+  return (
+    <div className={`mini-city ${variant}`}>
+      <span className="mini-moon" />
+      <div className="mini-buildings"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div>
+      <div className="mini-water" />
+    </div>
+  );
+}
+
+function MiniTerminal() {
+  return (
+    <div className="mini-terminal">
+      <span><i /><i /><i /></span>
+      <p><b>octocat@github</b> ~ $</p>
+      <p className="terminal-command">sudo generating_awesome_assets --style terminal</p>
+      <p><em>✓</em> Fetched 2,843 contributions</p>
+      <p><em>✓</em> Rendered terminal-card.png</p>
+      <p><strong>Asset ready to download.</strong> <i className="terminal-caret" /></p>
+    </div>
+  );
+}
+
+function MiniBento({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`mini-bento ${compact ? "compact" : ""}`}>
+      <div className="mini-profile"><span className="mini-avatar"><i /><b /></span><b>octocat<small>Software Engineer</small></b></div>
+      <div className="mini-contributions">{contributionLevels.slice(0, 35).map((level, index) => <i key={index} data-level={level} />)}</div>
+      <div className="mini-stats"><span>457<small>Repos</small></span><span>12.4k<small>Followers</small></span><span>2,843<small>Contributions</small></span></div>
+    </div>
+  );
+}
+
+function ContributionArt() {
+  return (
+    <div className="contribution-art">
+      <span className="art-sun" />
+      <span className="mountain mountain-back" />
+      <span className="mountain mountain-front" />
+      <div className="art-grid">{contributionLevels.slice(0, 42).map((level, index) => <i key={index} data-level={level} />)}</div>
+    </div>
+  );
+}
+
+function StepCard({ number, title, detail, icon }: { number: string; title: string; detail: string; icon: React.ReactNode }) {
+  return (
+    <article className="step-card">
+      <span className="step-icon">{icon}</span>
+      <div><span className="step-label">Step {number}</span><h3>{number}. {title}</h3><p>{detail}</p></div>
+    </article>
   );
 }
 
